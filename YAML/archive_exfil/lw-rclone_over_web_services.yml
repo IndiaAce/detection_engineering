@@ -1,0 +1,47 @@
+- id: lw-aw_rclone_exfil_over_web_services
+  properties:
+    mitre: T1020
+    search: >
+      | tstats count min(_time) as firstTime max(_time) as lastTime 
+        from datamodel=Endpoint.Processes 
+        where `rclone_exfil_over_web_services_input`
+          Processes.process IN ("*copy*", "*mega*", "*pcloud*", "*ftp*", "*--config*", "*--progress*", "*--no-check-certificate*", "*--ignore-existing*", "*--auto-confirm*", "*--transfers*", "*--multi-thread-streams*") 
+        by Processes.dest Processes.user Processes.parent_process Processes.process_name Processes.process Processes.process_id Processes.parent_process_id Processes.original_file_name
+      | rename Processes.dest as dest, Processes.user as user, Processes.parent_process as parent_process, Processes.process_name as process_name, Processes.process as process, Processes.process_id as process_id, Processes.parent_process_id as parent_process_id, Processes.original_file_name as original_file_name
+      | eval firstTime=strftime(firstTime, "%Y-%m-%dT%H:%M:%S"), lastTime=strftime(lastTime, "%Y-%m-%dT%H:%M:%S")
+      | table firstTime lastTime dest user parent_process process_name process process_id parent_process_id original_file_name
+      | `detect_rclone_command_line_usage_filter`
+      | `rclone_exfil_drilldown`
+    macros: 
+      - id: rclone_exfil_over_web_services_input
+        properties:
+          definition: >
+            Processes.original_file_name="rclone.exe" OR Processes.process_name="rclone.exe"
+      - id: detect_rclone_command_line_usage_filter
+        properties:
+          definition: >
+            | eval severity=case(
+                like(process, "%--no-check-certificate%") AND like(process, "%--ignore-existing%"), "critical",
+                like(process, "%--no-check-certificate%") OR like(process, "%--ignore-existing%"), "high",
+                like(process, "%--config%") OR like(process, "%--progress%"), "medium",
+                true(), "low"
+            )
+            | where severity IN ("critical", "high", "medium")
+      - id: rclone_exfil_drilldown ```MAYBE```
+        properties:
+          definition: > 
+            index=test_index sourcetype="csv"
+            | search Processes.process_id=$process_id$ Processes.dest=$dest$ Processes.user=$user$
+            | table _time Processes.dest Processes.user Processes.parent_process Processes.process_name Processes.process Processes.process_id Processes.parent_process_id Processes.original_file_name Processes.command_line Processes.file_path Processes.parent_process_path
+    index-based-search:
+      - id: rclone_test_search
+        search: >
+          index=dev_link sourcetype=rclone_tst
+          | eval _time=strptime(_time, "%Y-%m-%dT%H:%M:%S")
+          | where like(process_name, "rclone.exe") OR like(process, "%rclone%")
+          | where process_name IN ("*copy*", "*mega*", "*pcloud*", "*ftp*", "*--config*", "*--progress*", "*--no-check-certificate*", "*--ignore-existing*", "*--auto-confirm*", "*--transfers*", "*--multi-thread-streams*")
+          | stats count min(_time) as firstTime max(_time) as lastTime 
+            by dest user parent_process parent_process_name process_name process process_id parent_process_id 
+          | eval firstTime=strftime(firstTime, "%Y-%m-%dT%H:%M:%S"), lastTime=strftime(lastTime, "%Y-%m-%dT%H:%M:%S")
+          | table firstTime lastTime dest user parent_process parent_process_name process_name process process_id parent_process_id
+          | `detect_rclone_command_line_usage_filter`

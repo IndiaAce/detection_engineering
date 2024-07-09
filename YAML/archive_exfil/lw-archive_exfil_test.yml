@@ -28,3 +28,4 @@ rule:
         id: "TA0009"
         name: "Collection"
         reference: "https://attack.mitre.org/tactics/TA0009/"
+        
