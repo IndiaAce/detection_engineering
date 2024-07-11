@@ -30,8 +30,8 @@
       - id: rclone_exfil_drilldown ```MAYBE```
         properties:
           definition: > 
-            index=test_index sourcetype="csv"
-            | search Processes.process_id=$process_id$ Processes.dest=$dest$ Processes.user=$user$
+            ```a better drill down might be to just look at other general process activity on the host or maybe outbound network activity from the host. Just trying to imagine what might be useful for an analyst to pivot to to determine if this is actually malicious or not.```
+            | tstats `summariesonly` count from datamodel=Endpoint.Processes where Processes.process_id=$process_id$ Processes.dest=$dest$ Processes.user=$user$ by _time Processes.dest Processes.user Processes.parent_process Processes.process_name Processes.process Processes.process_id Processes.parent_process_id Processes.original_file_name Processes.command_line Processes.file_path Processes.parent_process_path
             | table _time Processes.dest Processes.user Processes.parent_process Processes.process_name Processes.process Processes.process_id Processes.parent_process_id Processes.original_file_name Processes.command_line Processes.file_path Processes.parent_process_path
     index-based-search:
       - id: rclone_test_search
