@@ -59,6 +59,12 @@
                   | table _time dest dest_ip dest_port app action bytes packets category]
             | sort _time
 
+            ```That’s an interesting idea. I think the process piece may be a bit too narrow and the network piece maybe a bit too broad.
+
+With the process piece here, we’d be essentially just showing them the same-ish thing that would have been present in the detection just in a slightly different way. But the more I think about it, the more I think that my original suggestion to show other processes from that host might not be all that useful anyway.
+
+Thinking out loud - What if on the network piece, we narrow it down a bit to like only include external destinations and then also time >= first seen from the detection? That way we’re only getting network activity after the process execution where it’s leaving the client’s network. That could maybe then help the analyst decide if that related network activity is suspicious/malicious in nature by looking at the dest ip and bytes_out ?```
+
     index-based-search:
       - id: rclone_test_search
         search: >
