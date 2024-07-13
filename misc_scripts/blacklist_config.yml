@@ -1,0 +1,5 @@
+blacklist_folders:
+  - TestFolder
+
+blacklist_files:
+  - test_alert.yml
