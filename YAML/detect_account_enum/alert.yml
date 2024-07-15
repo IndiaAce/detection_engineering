@@ -1,0 +1,34 @@
+- id: lw-aw_domain_account_enumeration
+  properties:
+    mitre: T1087
+    mitre: T1087.002
+    search: >
+      (source=WinEventLog:Microsoft-Windows-PowerShell/Operational OR source="XmlWinEventLog:Microsoft-Windows-PowerShell/Operational" EventCode=4104 ScriptBlockText="*get-aduser*" ScriptBlockText="*-filter*") 
+      OR (EventCode=4688 (New_Process_Name="*adfind.exe" Process_Command_Line="*-sc adinfo*" OR Process_Command_Line="*-sc admincountdmp*" OR Process_Command_Line="*-f (objectcategory=person)*"))
+      OR (EventCode=4688 (New_Process_Name="*net.exe" Process_Command_Line="*net user /domain*"))
+      OR (EventCode=4688 (New_Process_Name="*query.exe" Process_Command_Line="*query user /SERVER:*"))
+      OR (source=WinEventLog:Microsoft-Windows-PowerShell/Operational EventCode=4104 ScriptBlockText="*get-localgroupmember -group Users*")
+      | stats count min(_time) as firstTime max(_time) as lastTime by EventCode ScriptBlockText New_Process_Name Process_Command_Line Computer UserID
+      | rename Computer as dest, UserID as user, New_Process_Name as process_name, Process_Command_Line as command_line
+      | `security_content_ctime(firstTime)` 
+      | `security_content_ctime(lastTime)` 
+      | `output_filter`
+      | table EventCode ScriptBlockText process_name command_line dest user firstTime lastTime severity
+    macros: 
+      - id: security_content_ctime
+        properties: 
+          definition: >
+          'convert timeformat="%Y-%m-%dT%H:%M:%S" ctime($field$)'
+      - id: domain_account_enumeration_input
+        properties:
+          definition: >
+            (source=WinEventLog:Microsoft-Windows-PowerShell/Operational OR source="XmlWinEventLog:Microsoft-Windows-PowerShell/Operational")
+      - id: domain_account_enumeration_output
+        properties:
+          definition: >
+            eval severity=case(
+                match(Process_Command_Line, "-sc admincountdmp") OR match(Process_Command_Line, "-f \\(objectcategory=person\\)"), "Critical",
+                match(ScriptBlockText, "get-aduser -filter \\*"), "High",
+                match(Process_Command_Line, "net user /domain") OR match(Process_Command_Line, "query user /SERVER:"), "Medium",
+                true(), "Low"
+            )
