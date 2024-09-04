@@ -1,0 +1,9 @@
+# We need to review the following: 
+
+get rid of the blacklist.yml, and please ignore all files from /workspaces/goldenanchor/Content_Search/Splunk/WrenchSearche and there are some alerts that show in shadow, according to the AlertStatus.csv but are showing "YES" in the the final output.
+
+ANY search that is NOT in the AlertStatusReport.csv should be a NO as well as ANY search that is in "SHADOW" in the alert report. 
+
+Also, please output another column on the very end that shows the directory where the alert was grabbed from.
+
+Please make the "ignore files" faily modular so that I might add future directories to the exclude list. Again, the endpoint here is to compare the AlertStatusReport.csv with a global source of truth, and output the total number of TTPs found in TTP_Coverage that are LIVE in the AlertStatusReport.
