@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 
 # Define the directory path
 default_directory = '/workspaces/goldenanchor/Content_Search/Splunk'
+base_path = '/workspaces/goldenanchor/'  # Base path inside Docker container
 
 # Load blacklist configuration
 def load_blacklist(config_file):
@@ -50,6 +51,15 @@ def init_argparse():
     parser.add_argument('--mitre', default='mitre_attack_patterns.txt', help="Path to the MITRE attack patterns file")
     return parser
 
+# Deduplication function
+def is_duplicate(entry, seen_entries):
+    """Check if an entry is already in the seen entries set."""
+    entry_key = (entry[0], entry[1])  # (id_value, mitre_id)
+    if entry_key in seen_entries:
+        return True
+    seen_entries.add(entry_key)
+    return False
+
 # Main function
 def main():
     parser = init_argparse()
@@ -66,6 +76,7 @@ def main():
 
     # Initialize a list to store the rows for the CSV
     rows = []
+    seen_entries = set()  # Set to track unique (id, TTP) pairs
 
     # Walk through the directory and its subdirectories
     for root, dirs, files in os.walk(directory):
@@ -86,13 +97,16 @@ def main():
                                 # Check for resource dependencies pointing to ThreatFeeds CSV
                                 for dependency in content['resource_dependencies']:
                                     if dependency['resource_type'] == 'csv' and 'resource_key' in dependency:
-                                        csv_file_path = Path(directory) / dependency['resource_key']
+                                        # Construct the correct file path for the Docker container
+                                        csv_file_path = Path(base_path) / dependency['resource_key']
                                         if csv_file_path.exists():
                                             # Extract MITRE IDs from the CSV
                                             extracted_mitre_ids = load_mitre_from_csv(csv_file_path)
                                             for mitre_id in extracted_mitre_ids:
                                                 attack_name = mitre_patterns.get(mitre_id, "Unknown")
-                                                rows.append([id_value, mitre_id, attack_name, description_value])
+                                                row = [id_value, mitre_id, attack_name, description_value]
+                                                if not is_duplicate(row, seen_entries):
+                                                    rows.append(row)
                                             # Skip further processing for this file as it is handled
                                             continue
 
@@ -100,10 +114,14 @@ def main():
                             if isinstance(mitre_attack_ids, list):
                                 for mitre_id in mitre_attack_ids:
                                     attack_name = mitre_patterns.get(mitre_id, "Unknown")
-                                    rows.append([id_value, mitre_id, attack_name, description_value])
+                                    row = [id_value, mitre_id, attack_name, description_value]
+                                    if not is_duplicate(row, seen_entries):
+                                        rows.append(row)
                             else:
                                 attack_name = mitre_patterns.get(mitre_attack_ids, "Unknown")
-                                rows.append([id_value, mitre_attack_ids, attack_name, description_value])
+                                row = [id_value, mitre_attack_ids, attack_name, description_value]
+                                if not is_duplicate(row, seen_entries):
+                                    rows.append(row)
 
                 except yaml.YAMLError as exc:
                     logging.error(f"Error parsing YAML file {file_path}: {exc}")
