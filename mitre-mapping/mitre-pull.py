@@ -8,15 +8,12 @@ import argparse
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 
-# Define the directory path
+# Define the base directory path and Docker environment base path
 default_directory = '/workspaces/goldenanchor/Content_Search/Splunk'
 base_path = '/workspaces/goldenanchor/'  # Base path inside Docker container
 
-# Load blacklist configuration
-def load_blacklist(config_file):
-    with open(config_file, 'r') as file:
-        config = yaml.safe_load(file)
-    return config.get('blacklist_folders', []), config.get('blacklist_files', [])
+# Directories to exclude
+EXCLUDE_DIRECTORIES = {'WrenchSearche'}  # Modular exclusion list
 
 # Load MITRE attack patterns from file
 def load_mitre_attack_patterns(file_path):
@@ -45,9 +42,8 @@ def load_mitre_from_csv(file_path):
 
 # Initialize the script with command-line arguments
 def init_argparse():
-    parser = argparse.ArgumentParser(description="YAML to CSV parser with blacklists")
+    parser = argparse.ArgumentParser(description="YAML to CSV parser with exclusions")
     parser.add_argument('directory', nargs='?', default=default_directory, help="Directory to scan for YAML files")
-    parser.add_argument('--config', default='blacklist_config.yml', help="Path to the blacklist configuration file")
     parser.add_argument('--mitre', default='mitre_attack_patterns.txt', help="Path to the MITRE attack patterns file")
     return parser
 
@@ -65,11 +61,7 @@ def main():
     parser = init_argparse()
     args = parser.parse_args()
     directory = Path(args.directory)
-    config_file = args.config
     mitre_file = args.mitre
-
-    # Load blacklists
-    blacklist_folders, blacklist_files = load_blacklist(config_file)
 
     # Load MITRE attack patterns
     mitre_patterns = load_mitre_attack_patterns(mitre_file)
@@ -80,10 +72,10 @@ def main():
 
     # Walk through the directory and its subdirectories
     for root, dirs, files in os.walk(directory):
-        # Remove blacklisted folders and "Old_Alerts" from the list of directories to traverse
-        dirs[:] = [d for d in dirs if d not in blacklist_folders and d != "Old_Alerts"]
+        # Remove excluded folders from the list of directories to traverse
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRECTORIES]
         for file in files:
-            if file.endswith('.yml') and file not in blacklist_files:
+            if file.endswith('.yml'):
                 file_path = Path(root) / file
                 try:
                     with open(file_path, 'r') as ymlfile:
@@ -104,7 +96,7 @@ def main():
                                             extracted_mitre_ids = load_mitre_from_csv(csv_file_path)
                                             for mitre_id in extracted_mitre_ids:
                                                 attack_name = mitre_patterns.get(mitre_id, "Unknown")
-                                                row = [id_value, mitre_id, attack_name, description_value]
+                                                row = [id_value, mitre_id, attack_name, description_value, str(root)]
                                                 if not is_duplicate(row, seen_entries):
                                                     rows.append(row)
                                             # Skip further processing for this file as it is handled
@@ -114,12 +106,12 @@ def main():
                             if isinstance(mitre_attack_ids, list):
                                 for mitre_id in mitre_attack_ids:
                                     attack_name = mitre_patterns.get(mitre_id, "Unknown")
-                                    row = [id_value, mitre_id, attack_name, description_value]
+                                    row = [id_value, mitre_id, attack_name, description_value, str(root)]
                                     if not is_duplicate(row, seen_entries):
                                         rows.append(row)
                             else:
                                 attack_name = mitre_patterns.get(mitre_attack_ids, "Unknown")
-                                row = [id_value, mitre_attack_ids, attack_name, description_value]
+                                row = [id_value, mitre_attack_ids, attack_name, description_value, str(root)]
                                 if not is_duplicate(row, seen_entries):
                                     rows.append(row)
 
@@ -136,7 +128,7 @@ def main():
         with open(csv_file, 'w', newline='') as csvfile:
             csvwriter = csv.writer(csvfile)
             # Write the header
-            csvwriter.writerow(['ID', 'MITRE ATT&CK ID', 'Attack Name', 'Description'])
+            csvwriter.writerow(['ID', 'MITRE ATT&CK ID', 'Attack Name', 'Description', 'Directory'])
             # Write the rows
             csvwriter.writerows(rows)
         logging.info(f"CSV file {csv_file} created successfully.")
