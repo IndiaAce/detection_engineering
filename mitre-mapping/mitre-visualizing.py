@@ -15,6 +15,10 @@ def load_alert_status(file_path):
             alert_status[search_name] = status.upper()
     return alert_status
 
+# Check if the word "risk" is in the ID or description
+def contains_risk(id_value, description):
+    return "risk" in id_value.lower() or "risk" in description.lower()
+
 # Main function to match TTP coverage with Alert Status Report
 def match_ttp_coverage(coverage_file, alert_status_file, output_file):
     alert_status = load_alert_status(alert_status_file)
@@ -31,10 +35,14 @@ def match_ttp_coverage(coverage_file, alert_status_file, output_file):
 
         for row in reader:
             id_value = row[0]
+            description_value = row[3]
             total_detections += 1  # Count total detections in TTP_Coverage
 
             # Determine coverage based on AlertStatusReport
-            if id_value in alert_status:
+            if contains_risk(id_value, description_value):
+                row.append('YES')
+                live_ttps_count += 1
+            elif id_value in alert_status:
                 detections_in_alertstatus += 1  # Count detections found in AlertStatusReport
                 if alert_status[id_value] == 'LIVE':
                     row.append('YES')
