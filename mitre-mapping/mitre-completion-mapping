@@ -1,9 +1,9 @@
 import csv
 from collections import defaultdict
 
-# Read TTP Coverages and organize them by search name
+# Read TTP Coverages and organize them by search name with details
 ttp_coverages = defaultdict(list)
-all_ttp_ids = set()
+all_ttp_details = []
 
 with open('TTP_Coverages.csv', 'r') as f:
     reader = csv.reader(f)
@@ -11,9 +11,10 @@ with open('TTP_Coverages.csv', 'r') as f:
     for row in reader:
         search_id = row[0]
         ttp_id = row[1]
-        if ttp_id != 'T0000':  # We ignore the 'Unknown' TTPs for coverage calculation
-            ttp_coverages[search_id].append(ttp_id)
-            all_ttp_ids.add(ttp_id)
+        attack_name = row[2]
+        description = row[3]
+        ttp_coverages[search_id].append((ttp_id, attack_name, description))
+        all_ttp_details.append((search_id, ttp_id, attack_name, description))
 
 # Read Alert Status Report
 alert_status = defaultdict(lambda: {'SHADOW': False, 'LIVE': False})
@@ -23,33 +24,34 @@ with open('AlertStatusReport.csv', 'r') as f:
     next(reader)  # Skip header
     for row in reader:
         search_name, client_name = row
-        if search_name in ttp_coverages:
-            alert_status[search_name][client_name] = True
+        alert_status[search_name][client_name] = True
 
-# Calculate TTP coverage
+# Prepare the output with details from the first CSV and coverage status from the second CSV
+output_data = [['Detection ID', 'MITRE ATT&CK ID', 'Attack Name', 'Description', 'Covered']]
+
 covered_ttps = set()
 
-for search_name, status in alert_status.items():
-    if status['SHADOW'] or status['LIVE']:
-        covered_ttps.update(ttp_coverages[search_name])
+for search_name, ttp_list in ttp_coverages.items():
+    for ttp_id, attack_name, description in ttp_list:
+        covered = 'NO'  # Default to 'NO' for uncovered TTPs
+        if alert_status[search_name]['SHADOW'] or alert_status[search_name]['LIVE']:
+            covered = 'YES'
+            covered_ttps.add(ttp_id)
+        output_data.append([search_name, ttp_id, attack_name, description, covered])
 
-coverage_percentage = len(covered_ttps) / len(all_ttp_ids) * 100
-
-# Generate the output CSV
-output_data = [['TTP ID', 'Covered']]
-for ttp_id in all_ttp_ids:
-    covered = 'YES' if ttp_id in covered_ttps else 'NO'
-    output_data.append([ttp_id, covered])
+# Calculate total coverage percentage
+unique_ttp_ids = {ttp_id for _, ttp_id, _, _ in all_ttp_details if ttp_id != 'T0000'}  # Exclude 'Unknown' TTPs
+coverage_percentage = len(covered_ttps) / len(unique_ttp_ids) * 100
 
 # Add coverage summary
 output_data.append([])
-output_data.append(['Total TTPs', len(all_ttp_ids)])
+output_data.append(['Total TTPs', len(unique_ttp_ids)])
 output_data.append(['Covered TTPs', len(covered_ttps)])
 output_data.append(['Coverage Percentage', f"{coverage_percentage:.2f}%"])
 
 # Write the output CSV
-with open('TTP_Coverage_Report.csv', 'w', newline='') as f:
+with open('Detailed_TTP_Coverage_Report.csv', 'w', newline='') as f:
     writer = csv.writer(f)
     writer.writerows(output_data)
 
-print('TTP coverage report generated successfully!')
+print('Detailed TTP coverage report generated successfully!')
