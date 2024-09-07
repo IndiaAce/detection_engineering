@@ -2,6 +2,12 @@ suppression:
   include:
   - id: suppression_3
     properties:
-      '# Creator of suppression': generated_user
+      # Creator of suppression: generated_user
       owner: nobody
       search: '`ingress_tool_transfer_macro` source="ingress_tool_transfer" src="123.456.789.10"'
+  - id: simple_tune_ingress_tool_transfer_dest_123.456
+    properties:
+      # Creator of suppression: luke
+      owner: nobody
+      search: >
+        `notable_index` source=Ingress Tool Transfer dest="123.456" _time > 1726337791

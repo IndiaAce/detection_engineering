@@ -2,6 +2,6 @@ suppression:
   include:
   - id: suppression_7
     properties:
-      '# Creator of suppression': generated_user
+      # Creator of suppression: generated_user
       owner: nobody
       search: '`ingress_tool_transfer_macro` source="ingress_tool_transfer" src="123.456.789.10"'
