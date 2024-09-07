@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import FoldedScalarString, PlainScalarString
 from ruamel.yaml.comments import CommentedMap
-from PySide6.QtWidgets import QApplication, QMainWindow, QComboBox, QListWidget, QVBoxLayout, QWidget, QMessageBox, QPushButton, QFormLayout, QLineEdit, QDialog, QDialogButtonBox, QComboBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QComboBox, QListWidget, QVBoxLayout, QWidget, QMessageBox, QPushButton, QFormLayout, QLineEdit, QDialog, QDialogButtonBox, QComboBox, QTextEdit
 import re
 from io import StringIO
 
@@ -27,14 +27,19 @@ def checkout_main_and_create_branch(branch_name):
         return False
     return True
 
-def commit_and_push_changes(client_name, nms_number, reason, branch_name):
+def commit_and_push_changes(client_name, nms_number, reason, branch_name, is_new_branch=True):
     if not run_git_command(f'git add client/{client_name}/.'):
         return False
     commit_message = f'{nms_number}: {reason}'
     if not run_git_command(f'git commit -m "{commit_message}"'):
         return False
-    if not run_git_command(f'git push -u origin {branch_name}'):
-        return False
+
+    if is_new_branch:
+        if not run_git_command(f'git push -u origin {branch_name}'):
+            return False
+    else:
+        if not run_git_command(f'git push'):
+            return False
     return True
 
 def handle_existing_branch_operations(branch_name, client_name, nms_number, reason):
@@ -56,6 +61,24 @@ def format_yaml_string(yaml_string):
     yaml_string = re.sub(r"'# Creator of suppression':", "# Creator of suppression:", yaml_string)
     yaml_string = re.sub(r">-\n", ">\n", yaml_string)
     return yaml_string
+
+def show_suppression_preview(suppression_yaml):
+    dialog = QDialog()
+    dialog.setWindowTitle("Preview Suppression")
+    layout = QVBoxLayout()
+
+    text_edit = QTextEdit(dialog)
+    text_edit.setText(suppression_yaml)
+    text_edit.setReadOnly(True)
+    layout.addWidget(text_edit)
+
+    button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
+    button_box.accepted.connect(dialog.accept)
+    button_box.rejected.connect(dialog.reject)
+    layout.addWidget(button_box)
+
+    dialog.setLayout(layout)
+    return dialog.exec() == QDialog.Accepted
 
 class SuppressionFormDialog(QDialog):
     def __init__(self):
@@ -192,12 +215,27 @@ class MainWindow(QMainWindow):
                 })
             })
 
-            self.update_suppressions_file(client_name, new_suppression)
+            # Initialize YAML object
+            yaml = YAML()
+            yaml.preserve_quotes = True  # Ensure quotes are preserved
 
-            branch_name = f"suppression_{nms_ticket}"
-            if checkout_main_and_create_branch(branch_name):
-                if commit_and_push_changes(client_name, nms_ticket, reason, branch_name):
-                    QMessageBox.information(self, "Success", f"Suppression added and pushed to branch '{branch_name}'!")
+            # Use StringIO to capture the YAML output
+            stream = StringIO()
+            yaml.dump(new_suppression, stream)
+            formatted_yaml = format_yaml_string(stream.getvalue())
+
+            # Preview suppression YAML
+            if show_suppression_preview(formatted_yaml):
+                # Proceed with adding suppression to file
+                self.update_suppressions_file(client_name, new_suppression)
+
+                # Git operations and push changes
+                branch_name = f"suppression_{nms_ticket}"
+                if checkout_main_and_create_branch(branch_name):
+                    if commit_and_push_changes(client_name, nms_ticket, reason, branch_name):
+                        QMessageBox.information(self, "Success", f"Suppression added and pushed to branch '{branch_name}'!")
+            else:
+                QMessageBox.information(self, "Cancelled", "Suppression creation cancelled. Please re-enter SPL.")
 
     def simple_tune(self):
         client_name = self.client_selector.currentText()
@@ -242,9 +280,22 @@ class MainWindow(QMainWindow):
                 })
             })
 
-            self.update_suppressions_file(client_name, new_suppression)
+            # Initialize YAML object
+            yaml = YAML()
+            yaml.preserve_quotes = True  # Ensure quotes are preserved
 
-            QMessageBox.information(self, "Success", f"Simple tune suppression added for '{alert_id}' on field '{field}'!")
+            # Use StringIO to capture the YAML output
+            stream = StringIO()
+            yaml.dump(new_suppression, stream)
+            formatted_yaml = format_yaml_string(stream.getvalue())
+
+            # Preview suppression YAML
+            if show_suppression_preview(formatted_yaml):
+                # Proceed with adding suppression to file
+                self.update_suppressions_file(client_name, new_suppression)
+                QMessageBox.information(self, "Success", f"Simple tune suppression added for '{alert_id}' on field '{field}'!")
+            else:
+                QMessageBox.information(self, "Cancelled", "Suppression creation cancelled. Please re-enter values.")
 
     def to_snake_case(self, text):
         return text.lower().replace(' ', '_')
