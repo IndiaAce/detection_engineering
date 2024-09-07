@@ -1,0 +1,4 @@
+macro:
+  include:
+    - id: ingress_tool_transfer_input
+    - id: ingress_tool_transfer_output

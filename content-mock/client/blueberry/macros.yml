@@ -1,0 +1,22 @@
+macro:
+  include:
+  - id: ingress_tool_transfer_input
+  - id: account_lockouts_alert_input
+  - id: malicious_file_transfer_input
+  - id: unauthorized_access_input
+  - id: suspicious_logon_input
+  - id: privilege_escalation_input
+  - id: network_anomaly_input
+  - id: data_exfiltration_input
+  - id: ransomware_activity_input
+  - id: malware_detection_input
+  - id: ingress_tool_transfer_output
+  - id: account_lockouts_alert_output
+  - id: malicious_file_transfer_output
+  - id: unauthorized_access_output
+  - id: suspicious_logon_output
+  - id: privilege_escalation_output
+  - id: network_anomaly_output
+  - id: data_exfiltration_output
+  - id: ransomware_activity_output
+  - id: malware_detection_output

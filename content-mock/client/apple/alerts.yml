@@ -1,0 +1,6 @@
+alert:
+  include:
+  - id: ingress_tool_transfer
+    remove_shadow: true
+  - id: account_lockouts_alert
+    remove_shadow: false

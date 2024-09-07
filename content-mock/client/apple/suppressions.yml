@@ -1,0 +1,13 @@
+suppression:
+  include:
+  - id: example
+    properties:
+      owner: nobody
+        # Creator of suppression: <whoami fill>
+      search: '`example_macro` source="ingress_tool_transfer" src="123.456.789.10'
+  - id: simple_tune_ingress_tool_transfer_user_lukasdukas
+    properties:
+      # Creator of suppression: luke
+      owner: nobody
+      search: >
+        `notable_index` source=Ingress Tool Transfer user="lukasdukas" _time > 1726314713

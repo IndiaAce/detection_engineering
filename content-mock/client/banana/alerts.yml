@@ -1,0 +1,22 @@
+alert:
+  include:
+  - id: ingress_tool_transfer
+    remove_shadow: true
+  - id: account_lockouts_alert
+    remove_shadow: false
+  - id: malicious_file_transfer
+    remove_shadow: true
+  - id: unauthorized_access
+    remove_shadow: false
+  - id: suspicious_logon
+    remove_shadow: true
+  - id: privilege_escalation
+    remove_shadow: false
+  - id: network_anomaly
+    remove_shadow: true
+  - id: data_exfiltration
+    remove_shadow: false
+  - id: ransomware_activity
+    remove_shadow: true
+  - id: malware_detection
+    remove_shadow: false
