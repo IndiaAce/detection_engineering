@@ -150,14 +150,17 @@ class MainWindow(QMainWindow):
         self.alert_list.clear()
 
     def populate_clients(self):
-        client_dirs = [d for d in os.listdir('client') if os.path.isdir(os.path.join('client', d))]
+        client_base_path = '/Users/luke/Documents/dev_link/detection_engineering/content-mock/client/'
+        client_dirs = [d for d in os.listdir(client_base_path) if os.path.isdir(os.path.join(client_base_path, d))]
         self.client_selector.addItems(client_dirs)
 
     def on_client_selected(self, client_name):
-        client_dir = os.path.join('client', client_name)
+        client_base_path = '/Users/luke/Documents/dev_link/detection_engineering/content-mock/client/'
+        client_dir = os.path.join(client_base_path, client_name)
+        
         if not os.path.exists(client_dir) or not os.path.isdir(client_dir):
-            QMessageBox.critical(self, "Error", f"Client '{client_name}' does not exist.")
-            return
+            QMessageBox.critical(self, "Error", f"Client '{client_name}' does not exist in the specified path.")
+            return 
         
         ids = read_alerts_file(client_dir)
         if not ids:
@@ -246,7 +249,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Success", f"Simple tune suppression added for '{alert_id}' on field '{field}'!")
 
     def update_suppressions_file(self, client_name, new_suppression):
-        suppressions_file = os.path.join('client', client_name, 'suppressions.yml')
+        client_base_path = '/Users/luke/Documents/dev_link/detection_engineering/content-mock/client/'
+        suppressions_file = os.path.join(client_base_path, client_name, 'suppressions.yml')
         
         yaml = YAML()
         yaml.preserve_quotes = True  
@@ -267,7 +271,7 @@ class MainWindow(QMainWindow):
         # Format the YAML string to remove single quotes and change >- to >
         formatted_yaml = format_yaml_string(yaml_string)
 
-        # Write back to the file
+        # Write back to the file using the absolute path
         with open(suppressions_file, 'w') as file:
             file.write(formatted_yaml)
 
@@ -297,7 +301,7 @@ class MainWindow(QMainWindow):
             unix_time = int(one_week_from_now.timestamp())
 
             # Create SPL query for simple tune suppression with dynamic Unix time
-            spl = f'`notable_index` source={alert_id.replace(' ', '_').lower()} {field}="{value}" _time > {unix_time}'.strip()
+            spl = f"`notable_index` source={alert_id.replace(' ', '_').lower()} {field}=\"{value}\" _time > {unix_time}".strip()
 
             # Generate Suppression ID and owner
             suppression_id = f"simple_tune_{alert_id.replace(' ', '_').lower()}_{field}_{value}"
@@ -390,11 +394,17 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Success", f"Simple tune suppression added for '{alert_id}' on field '{field}'!")
 
     def update_suppressions_file(self, client_name, new_suppression):
-        suppressions_file = os.path.join('client', client_name, 'suppressions.yml')
+        client_base_path = '/Users/luke/Documents/dev_link/detection_engineering/content-mock/client/'
+        client_dir = os.path.join(client_base_path, client_name)
+        suppressions_file = os.path.join(client_dir, 'suppressions.yml')
         
         yaml = YAML()
         yaml.preserve_quotes = True  
-        
+
+        # Ensure the client directory exists; if not, create it
+        if not os.path.exists(client_dir):
+            os.makedirs(client_dir)
+
         # Load existing suppressions or initialize new structure
         if os.path.exists(suppressions_file):
             with open(suppressions_file, 'r') as file:
@@ -405,9 +415,15 @@ class MainWindow(QMainWindow):
         # Add the new suppression to the list
         data['suppression']['include'].append(new_suppression)
 
-        # Write back to the file
+        # Serialize the YAML to a string
+        yaml_string = yaml.dump(data)
+
+        # Format the YAML string to remove single quotes and change >- to >
+        formatted_yaml = format_yaml_string(yaml_string)
+
+        # Write back to the file using the absolute path
         with open(suppressions_file, 'w') as file:
-            yaml.dump(data, file)
+            file.write(formatted_yaml)
 
         QMessageBox.information(self, "Success", f"Suppression added successfully for client '{client_name}'!")
 
