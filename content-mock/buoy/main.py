@@ -8,6 +8,7 @@ from ruamel.yaml.scalarstring import FoldedScalarString, PlainScalarString
 from ruamel.yaml.comments import CommentedMap
 from PySide6.QtWidgets import QApplication, QMainWindow, QComboBox, QListWidget, QVBoxLayout, QWidget, QMessageBox, QPushButton, QFormLayout, QLineEdit, QDialog, QDialogButtonBox, QComboBox
 import re
+from io import StringIO
 
 def run_git_command(command, cwd=None):
     try:
@@ -52,15 +53,9 @@ def handle_existing_branch_operations(branch_name, client_name, nms_number, reas
     return True
 
 def format_yaml_string(yaml_string):
-    # Remove single quotes from '# Creator of suppression' key
     yaml_string = re.sub(r"'# Creator of suppression':", "# Creator of suppression:", yaml_string)
-
-    # Replace `>-` with `>`
     yaml_string = re.sub(r">-\n", ">\n", yaml_string)
-    
     return yaml_string
-
-# GUI Elements
 
 class SuppressionFormDialog(QDialog):
     def __init__(self):
@@ -223,15 +218,18 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Input Required", "All fields are required.")
                 return
 
+            # Convert alert_id to snake case for the source field
+            alert_id_snake_case = self.to_snake_case(alert_id)
+
             # Calculate Unix time for one week from now
             one_week_from_now = datetime.now() + timedelta(weeks=1)
             unix_time = int(one_week_from_now.timestamp())
 
             # Create SPL query for simple tune suppression with dynamic Unix time
-            spl = f'`notable_index` source={alert_id} {field}="{value}" _time > {unix_time}'.strip()
+            spl = f'`notable_index` source={alert_id_snake_case} {field}="{value}" _time > {unix_time}'.strip().strip("\n")
 
             # Generate Suppression ID and owner
-            suppression_id = f"simple_tune_{alert_id.replace(' ', '_').lower()}_{field}_{value}"
+            suppression_id = f"simple_tune_{alert_id_snake_case}_{field}_{value}"
             current_user = subprocess.check_output('whoami', shell=True).decode().strip()
 
             # Create the suppression data structure
@@ -240,7 +238,7 @@ class MainWindow(QMainWindow):
                 'properties': CommentedMap({
                     PlainScalarString('# Creator of suppression'): current_user,
                     'owner': 'nobody',
-                    'search': FoldedScalarString(spl.strip())
+                    'search': FoldedScalarString(spl)
                 })
             })
 
@@ -248,150 +246,8 @@ class MainWindow(QMainWindow):
 
             QMessageBox.information(self, "Success", f"Simple tune suppression added for '{alert_id}' on field '{field}'!")
 
-    def update_suppressions_file(self, client_name, new_suppression):
-        client_base_path = '/Users/luke/Documents/dev_link/detection_engineering/content-mock/client/'
-        suppressions_file = os.path.join(client_base_path, client_name, 'suppressions.yml')
-        
-        yaml = YAML()
-        yaml.preserve_quotes = True  
-        
-        # Load existing suppressions or initialize new structure
-        if os.path.exists(suppressions_file):
-            with open(suppressions_file, 'r') as file:
-                data = yaml.load(file) or {'suppression': {'include': []}}
-        else:
-            data = {'suppression': {'include': []}}
-
-        # Add the new suppression to the list
-        data['suppression']['include'].append(new_suppression)
-
-        # Serialize the YAML to a string
-        yaml_string = yaml.dump(data)
-
-        # Format the YAML string to remove single quotes and change >- to >
-        formatted_yaml = format_yaml_string(yaml_string)
-
-        # Write back to the file using the absolute path
-        with open(suppressions_file, 'w') as file:
-            file.write(formatted_yaml)
-
-        QMessageBox.information(self, "Success", f"Suppression added successfully for client '{client_name}'!")
-
-    def simple_tune(self):
-        client_name = self.client_selector.currentText()
-        if not client_name:
-            QMessageBox.warning(self, "Selection Required", "Please select a client.")
-            return
-        
-        alert_ids = [self.alert_list.item(i).text() for i in range(self.alert_list.count())]
-        if not alert_ids:
-            QMessageBox.warning(self, "No Alerts", "No alerts available to tune.")
-            return
-
-        simple_tune_dialog = SimpleTuneDialog(alert_ids)
-        if simple_tune_dialog.exec() == QDialog.Accepted:
-            alert_id, field, value = simple_tune_dialog.get_inputs()
-
-            if not alert_id or not field or not value:
-                QMessageBox.warning(self, "Input Required", "All fields are required.")
-                return
-
-            # Calculate Unix time for one week from now
-            one_week_from_now = datetime.now() + timedelta(weeks=1)
-            unix_time = int(one_week_from_now.timestamp())
-
-            # Create SPL query for simple tune suppression with dynamic Unix time
-            spl = f"`notable_index` source={alert_id.replace(' ', '_').lower()} {field}=\"{value}\" _time > {unix_time}".strip()
-
-            # Generate Suppression ID and owner
-            suppression_id = f"simple_tune_{alert_id.replace(' ', '_').lower()}_{field}_{value}"
-            current_user = subprocess.check_output('whoami', shell=True).decode().strip()
-
-            # Create the suppression data structure
-            new_suppression = CommentedMap({
-                'id': suppression_id,
-                'properties': CommentedMap({
-                    PlainScalarString('# Creator of suppression'): current_user,
-                    'owner': 'nobody',
-                    'search': FoldedScalarString(spl.strip())
-                })
-            })
-
-            self.update_suppressions_file(client_name, new_suppression)
-
-            QMessageBox.information(self, "Success", f"Simple tune suppression added for '{alert_id}' on field '{field}'!")
-
-    def update_suppressions_file(self, client_name, new_suppression):
-        suppressions_file = os.path.join('client', client_name, 'suppressions.yml')
-        
-        yaml = YAML()
-        yaml.preserve_quotes = True  
-        
-        # Load existing suppressions or initialize new structure
-        if os.path.exists(suppressions_file):
-            with open(suppressions_file, 'r') as file:
-                data = yaml.load(file) or {'suppression': {'include': []}}
-        else:
-            data = {'suppression': {'include': []}}
-
-        # Add the new suppression to the list
-        data['suppression']['include'].append(new_suppression)
-
-        # Serialize the YAML to a string
-        yaml_string = yaml.dump(data)
-
-        # Format the YAML string to remove single quotes and change >- to >
-        formatted_yaml = format_yaml_string(yaml_string)
-
-        # Write back to the file
-        with open(suppressions_file, 'w') as file:
-            file.write(formatted_yaml)
-
-        QMessageBox.information(self, "Success", f"Suppression added successfully for client '{client_name}'!")
-
-    def simple_tune(self):
-        client_name = self.client_selector.currentText()
-        if not client_name:
-            QMessageBox.warning(self, "Selection Required", "Please select a client.")
-            return
-        
-        alert_ids = [self.alert_list.item(i).text() for i in range(self.alert_list.count())]
-        if not alert_ids:
-            QMessageBox.warning(self, "No Alerts", "No alerts available to tune.")
-            return
-
-        simple_tune_dialog = SimpleTuneDialog(alert_ids)
-        if simple_tune_dialog.exec() == QDialog.Accepted:
-            alert_id, field, value = simple_tune_dialog.get_inputs()
-
-            if not alert_id or not field or not value:
-                QMessageBox.warning(self, "Input Required", "All fields are required.")
-                return
-
-            # Calculate Unix time for one week from now
-            one_week_from_now = datetime.now() + timedelta(weeks=1)
-            unix_time = int(one_week_from_now.timestamp())
-
-            # Create SPL query for simple tune suppression with dynamic Unix time
-            spl = f'`notable_index` source={alert_id} {field}="{value}" _time > {unix_time}'.strip()
-
-            # Generate Suppression ID and owner
-            suppression_id = f"simple_tune_{alert_id.replace(' ', '_').lower()}_{field}_{value}"
-            current_user = subprocess.check_output('whoami', shell=True).decode().strip()
-
-            # Create the suppression data structure
-            new_suppression = CommentedMap({
-                'id': suppression_id,
-                'properties': CommentedMap({
-                    PlainScalarString('# Creator of suppression'): current_user,
-                    'owner': 'nobody',
-                    'search': FoldedScalarString(spl.strip())  # Strip any trailing spaces or newlines
-                })
-            })
-
-            self.update_suppressions_file(client_name, new_suppression)
-
-            QMessageBox.information(self, "Success", f"Simple tune suppression added for '{alert_id}' on field '{field}'!")
+    def to_snake_case(self, text):
+        return text.lower().replace(' ', '_')
 
     def update_suppressions_file(self, client_name, new_suppression):
         client_base_path = '/Users/luke/Documents/dev_link/detection_engineering/content-mock/client/'
@@ -405,7 +261,7 @@ class MainWindow(QMainWindow):
         if not os.path.exists(client_dir):
             os.makedirs(client_dir)
 
-        # Load existing suppressions or initialize new structure
+        # Load existing suppressions or initialize a new structure
         if os.path.exists(suppressions_file):
             with open(suppressions_file, 'r') as file:
                 data = yaml.load(file) or {'suppression': {'include': []}}
@@ -415,8 +271,10 @@ class MainWindow(QMainWindow):
         # Add the new suppression to the list
         data['suppression']['include'].append(new_suppression)
 
-        # Serialize the YAML to a string
-        yaml_string = yaml.dump(data)
+        # Serialize the YAML to a string using a temporary stream
+        stream = StringIO()
+        yaml.dump(data, stream)
+        yaml_string = stream.getvalue()
 
         # Format the YAML string to remove single quotes and change >- to >
         formatted_yaml = format_yaml_string(yaml_string)
@@ -426,48 +284,6 @@ class MainWindow(QMainWindow):
             file.write(formatted_yaml)
 
         QMessageBox.information(self, "Success", f"Suppression added successfully for client '{client_name}'!")
-
-    def handle_existing_branch(self):
-        client_name = self.client_selector.currentText()
-        alert_name = self.alert_list.currentItem().text() if self.alert_list.currentItem() else None
-        
-        if not client_name or not alert_name:
-            QMessageBox.warning(self, "Selection Required", "Please select a client and an alert.")
-            return
-
-        branch_dialog = BranchNameDialog()
-        if branch_dialog.exec() == QDialog.Accepted:
-            branch_name = branch_dialog.get_branch_name()
-            if not branch_name:
-                QMessageBox.warning(self, "Input Required", "Branch name is required.")
-                return
-
-            form_dialog = SuppressionFormDialog()
-            if form_dialog.exec() == QDialog.Accepted:
-                nms_ticket, reason, spl = form_dialog.get_inputs()
-
-                if not nms_ticket or not reason or not spl:
-                    QMessageBox.warning(self, "Input Required", "All fields are required.")
-                    return
-
-                suppression_id = f"{nms_ticket}_{client_name}_{alert_name.replace(' ', '_').lower()}"
-                current_user = subprocess.check_output('whoami', shell=True).decode().strip()
-
-                new_suppression = CommentedMap({
-                    'id': suppression_id,
-                    'properties': CommentedMap({
-                        PlainScalarString('# Creator of suppression'): PlainScalarString(current_user),
-                        'owner': 'nobody',
-                        'search': FoldedScalarString(spl)
-                    })
-                })
-
-                self.update_suppressions_file(client_name, new_suppression)
-
-                if handle_existing_branch_operations(branch_name, client_name, nms_ticket, reason):
-                    QMessageBox.information(self, "Success", f"Suppression modified and changes pushed to branch '{branch_name}'!")
-
-# Remaining App Code and Initialization
 
 def read_alerts_file(client_dir):
     alerts_file = os.path.join(client_dir, 'alerts.yml')
