@@ -1,0 +1,25 @@
+id: okta_mfa_fatigue_impact
+title: okta_mfa_fatigue_impact
+catalog_type: "search"
+description: "Calculate estimated SOC impact for clients with Okta data for MFA Fatigue Attacks"
+authorization_scope: "detection"
+mock_time_field: _time
+earliest: -30d
+content: >
+  `sourcetype_index("Okta")` source="Okta:im2" eventType=system.push.send_factor_verify_push OR ((legacyEventType=core.user.factor.attempt_success) AND (debugContext.debugData.factor=OKTA_VERIFY_PUSH)) OR ((legacyEventType=core.user.factor.attempt_fail) AND (debugContext.debugData.factor=OKTA_VERIFY_PUSH)) 
+  | stats count(eval(legacyEventType="core.user.factor.attempt_success")) as successes count(eval(legacyEventType="core.user.factor.attempt_fail")) as failures count(eval(eventType="system.push.send_factor_verify_push")) as pushes by authenticationContext.externalSessionId,user,_time 
+  | stats latest(_time) as lasttime earliest(_time) as firsttime sum(successes) as successes sum(failures) as failures sum(pushes) as pushes by authenticationContext.externalSessionId,user 
+  | eval seconds=lasttime-firsttime 
+  | eval lasttime=strftime(lasttime, "%c") 
+  | search (pushes>1) 
+  | eval totalattempts=successes+failures 
+  ```We could likely wrap the next 4 evals & 3 where statements into a logic macro. I also might rework how this logic works for the actual detection. I don't like the idea of setting the entire finding field to a value and then derive other values from it.```
+  | eval finding="Normal authentication pattern" 
+  | eval finding=if(failures==pushes AND pushes>1,"Authentication attempts not successful because multiple pushes denied",finding) 
+  | eval finding=if(totalattempts>3 AND successes==0,"Multiple pushes sent and ignored",finding) 
+  | eval finding=if(successes>0 AND failures>0 AND pushes>4,"Multiple pushes sent, eventual successful authentication!",finding)
+  ```This could look different across the client base. Some clients might need this threshold set much higher. I propose we baseline this detection in shadow regardless.```
+  | where seconds<600
+  | where finding!="Normal authentication pattern"
+  ```This would be the output macro. Sort of arbitrary on these values, but eventual successful auth should absolutely be a high-severity notable```
+  | eval severity=case(finding="Authentication attempts not successful because multiple pushes denied","medium",finding="Multiple pushes sent and ignored","medium",finding="Multiple pushes sent, eventual successful authentication!","high",finding="Normal authentication pattern","informational",true(),"informational")

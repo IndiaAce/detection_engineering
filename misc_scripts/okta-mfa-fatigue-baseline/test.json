@@ -1,0 +1,37 @@
+{
+    "pear": {
+        "fields": [],
+        "results": [
+            {
+                "authenticationContext.externalSessionId": "idx231321fds10230gf",
+                "failures": "1",
+                "finding": "Multiple pushes sent, eventual successful authentication!",
+                "firsttime": "1724664259.603",
+                "lasttime": "Mon Aug 26 09:24:36 2024",
+                "pushes": "8",
+                "seconds": "16.555",
+                "severity": "high",
+                "successes": "1",
+                "totalattempts": "2",
+                "user": "tuser@company.com"
+            },            
+            {
+                "authenticationContext.externalSessionId": "idxg2412313cd4",
+                "failures": "1",
+                "finding": "Multiple pushes sent, eventual successful authentication!",
+                "firsttime": "1725826365.571",
+                "lasttime": "Sun Sep  8 16:13:10 2024",
+                "pushes": "6",
+                "seconds": "24.968",
+                "severity": "high",
+                "successes": "1",
+                "totalattempts": "2",
+                "user": "testuser@company.com"
+            }
+        ]
+    },
+    "apple": {
+        "fields": [],
+        "results": []
+    }
+}
