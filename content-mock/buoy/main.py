@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os
 import yaml
 import subprocess
@@ -11,8 +10,10 @@ from ruamel.yaml.comments import CommentedMap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QComboBox, QListWidget, QVBoxLayout, QWidget,
     QMessageBox, QPushButton, QFormLayout, QLineEdit, QDialog,
-    QDialogButtonBox, QTextEdit, QLabel, QProgressDialog, QAction, QFileDialog
+    QDialogButtonBox, QTextEdit, QLabel, QProgressDialog, QFileDialog,
+    QStackedWidget, QHBoxLayout
 )
+from PySide6.QtGui import QAction, QFont
 from PySide6.QtCore import Qt
 import re
 from io import StringIO
@@ -24,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 config = configparser.ConfigParser()
 config.read('config.ini')
 
-CLIENT_BASE_PATH = config.get('Paths', 'ClientBasePath', fallback='./clients/')
+CLIENT_BASE_PATH = config.get('Paths', 'ClientBasePath', fallback='./client/')
 GIT_REPO_PATH = config.get('Paths', 'GitRepoPath', fallback='.')
 CURRENT_USER = subprocess.getoutput('whoami')
 
@@ -76,121 +77,39 @@ def show_suppression_preview(suppression_yaml):
     dialog.setLayout(layout)
     return dialog.exec() == QDialog.Accepted
 
-class SuppressionFormDialog(QDialog):
-    """Dialog to collect suppression details from the user."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Add New Suppression")
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QFormLayout(self)
-
-        self.ticket_input = QLineEdit(self)
-        self.reason_input = QLineEdit(self)
-        self.spl_input = QTextEdit(self)
-
-        layout.addRow("NMS Ticket Number:", self.ticket_input)
-        layout.addRow("Reason:", self.reason_input)
-        layout.addRow("SPL Query:", self.spl_input)
-
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        self.button_box.accepted.connect(self.validate_inputs)
-        self.button_box.rejected.connect(self.reject)
-        layout.addWidget(self.button_box)
-
-    def validate_inputs(self):
-        if not self.ticket_input.text().strip() or not self.reason_input.text().strip() or not self.spl_input.toPlainText().strip():
-            QMessageBox.warning(self, "Input Required", "All fields are required.")
-            return
-        self.accept()
-
-    def get_inputs(self):
-        return (
-            self.ticket_input.text().strip(),
-            self.reason_input.text().strip(),
-            self.spl_input.toPlainText().strip()
-        )
-
-class SimpleTuneDialog(QDialog):
-    """Dialog to collect simple tune details from the user."""
-    def __init__(self, alert_ids, parent=None):
-        super().__init__(parent)
-        self.alert_ids = alert_ids
-        self.setWindowTitle("Simple Tune Suppression")
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QFormLayout(self)
-
-        self.alert_id_selector = QComboBox(self)
-        self.alert_id_selector.addItems(self.alert_ids)
-
-        self.field_selector = QComboBox(self)
-        self.field_selector.addItems(["dest", "host", "user"])
-
-        self.value_input = QLineEdit(self)
-
-        layout.addRow("Select Alert ID:", self.alert_id_selector)
-        layout.addRow("Select Field:", self.field_selector)
-        layout.addRow("Enter Value:", self.value_input)
-
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        self.button_box.accepted.connect(self.validate_inputs)
-        self.button_box.rejected.connect(self.reject)
-        layout.addWidget(self.button_box)
-
-    def validate_inputs(self):
-        if not self.value_input.text().strip():
-            QMessageBox.warning(self, "Input Required", "Value field cannot be empty.")
-            return
-        self.accept()
-
-    def get_inputs(self):
-        return (
-            self.alert_id_selector.currentText(),
-            self.field_selector.currentText(),
-            self.value_input.text().strip()
-        )
-
 class MainWindow(QMainWindow):
-    """Main window of the application."""
+    """Main window of the application with navigation."""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Client Alerts Viewer")
+        self.setWindowTitle("Buoy - Detection Tuning Tool")
+        self.selected_client = None
+        self.selected_action = None
+        self.selected_alert = None
+        self.scratch_pad_content = ""
         self.setup_ui()
         self.populate_clients()
 
     def setup_ui(self):
-        self.layout = QVBoxLayout()
+        # Create a QStackedWidget to hold different pages
+        self.stacked_widget = QStackedWidget(self)
+        self.setCentralWidget(self.stacked_widget)
 
-        self.client_selector = QComboBox(self)
-        self.client_selector.setEditable(True)
-        self.client_selector.currentTextChanged.connect(self.on_client_selected)
-        self.layout.addWidget(QLabel("Select Client:", self))
-        self.layout.addWidget(self.client_selector)
+        # Create pages
+        self.page1 = QWidget()
+        self.page2 = QWidget()
+        self.page3 = QWidget()
+        self.page4 = QWidget()
 
-        self.alert_list = QListWidget(self)
-        self.layout.addWidget(QLabel("Alerts:", self))
-        self.layout.addWidget(self.alert_list)
+        self.setup_page1()
+        self.setup_page2()
+        self.setup_page3()
+        self.setup_page4()
 
-        self.clear_button = QPushButton("Clear Selection", self)
-        self.clear_button.clicked.connect(self.clear_selection)
-        self.layout.addWidget(self.clear_button)
-
-        self.add_suppression_button = QPushButton("Add Suppression", self)
-        self.add_suppression_button.clicked.connect(self.add_suppression)
-        self.add_suppression_button.setEnabled(False)
-        self.layout.addWidget(self.add_suppression_button)
-
-        self.simple_tune_button = QPushButton("Simple Tune", self)
-        self.simple_tune_button.clicked.connect(self.simple_tune)
-        self.simple_tune_button.setEnabled(False)
-        self.layout.addWidget(self.simple_tune_button)
-
-        container = QWidget()
-        container.setLayout(self.layout)
-        self.setCentralWidget(container)
+        # Add pages to stacked widget
+        self.stacked_widget.addWidget(self.page1)
+        self.stacked_widget.addWidget(self.page2)
+        self.stacked_widget.addWidget(self.page3)
+        self.stacked_widget.addWidget(self.page4)
 
         # Menu bar for settings
         menubar = self.menuBar()
@@ -200,11 +119,116 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self.export_suppressions)
         settings_menu.addAction(export_action)
 
-    def clear_selection(self):
-        self.client_selector.setCurrentIndex(-1)
-        self.alert_list.clear()
-        self.add_suppression_button.setEnabled(False)
-        self.simple_tune_button.setEnabled(False)
+    def setup_page1(self):
+        """Setup for Page 1: Client Selection."""
+        layout = QVBoxLayout()
+
+        label = QLabel("Select Client:", self)
+        layout.addWidget(label)
+
+        self.client_selector = QComboBox(self)
+        self.client_selector.setEditable(True)
+        layout.addWidget(self.client_selector)
+
+        # Navigation buttons
+        nav_layout = QHBoxLayout()
+        next_button = QPushButton("Next", self)
+        next_button.clicked.connect(self.go_to_page2)
+        nav_layout.addStretch()
+        nav_layout.addWidget(next_button)
+        layout.addLayout(nav_layout)
+
+        self.page1.setLayout(layout)
+
+    def setup_page2(self):
+        """Setup for Page 2: Action Selection."""
+        layout = QVBoxLayout()
+
+        label = QLabel("Choose Action:", self)
+        layout.addWidget(label)
+
+        self.add_suppression_button = QPushButton("Add Suppression", self)
+        self.add_suppression_button.clicked.connect(self.select_add_suppression)
+        layout.addWidget(self.add_suppression_button)
+
+        self.simple_tune_button = QPushButton("Simple Tune", self)
+        self.simple_tune_button.clicked.connect(self.select_simple_tune)
+        layout.addWidget(self.simple_tune_button)
+
+        # Navigation buttons
+        nav_layout = QHBoxLayout()
+        back_button = QPushButton("Back", self)
+        back_button.clicked.connect(self.go_to_page1)
+        nav_layout.addWidget(back_button)
+        nav_layout.addStretch()
+        layout.addLayout(nav_layout)
+
+        self.page2.setLayout(layout)
+
+    def setup_page3(self):
+        """Setup for Page 3: Alert Selection and Action Input."""
+        layout = QVBoxLayout()
+
+        self.alert_list = QListWidget(self)
+        layout.addWidget(QLabel("Select Alert:", self))
+        layout.addWidget(self.alert_list)
+
+        # For Add Suppression action
+        self.spl_input = QTextEdit(self)
+        self.spl_input.setPlaceholderText("Enter SPL Query here...")
+        self.spl_input.hide()
+        layout.addWidget(self.spl_input)
+
+        # For Simple Tune action
+        self.field_selector = QComboBox(self)
+        self.field_selector.addItems(["dest", "host", "user"])
+        self.field_selector.hide()
+        layout.addWidget(QLabel("Select Field:", self))
+        layout.addWidget(self.field_selector)
+
+        self.value_input = QLineEdit(self)
+        self.value_input.setPlaceholderText("Enter Value")
+        self.value_input.hide()
+        layout.addWidget(self.value_input)
+
+        # Navigation buttons
+        nav_layout = QHBoxLayout()
+        back_button = QPushButton("Back", self)
+        back_button.clicked.connect(self.go_to_page2)
+        nav_layout.addWidget(back_button)
+
+        next_button = QPushButton("Next", self)
+        next_button.clicked.connect(self.go_to_page4)
+        nav_layout.addStretch()
+        nav_layout.addWidget(next_button)
+        layout.addLayout(nav_layout)
+
+        self.page3.setLayout(layout)
+
+    def setup_page4(self):
+        """Setup for Page 4: Scratch Pad and Confirmation."""
+        layout = QVBoxLayout()
+
+        self.scratch_pad = QTextEdit(self)
+        self.scratch_pad.setPlaceholderText("Scratch Pad...")
+        monospace_font = QFont("Courier New")
+        self.scratch_pad.setFont(monospace_font)
+        layout.addWidget(QLabel("Scratch Pad:", self))
+        layout.addWidget(self.scratch_pad)
+
+        # Navigation buttons
+        nav_layout = QHBoxLayout()
+        back_button = QPushButton("Back", self)
+        back_button.clicked.connect(self.go_to_page3)
+        nav_layout.addWidget(back_button)
+
+        finish_button = QPushButton("Finish", self)
+        finish_button.clicked.connect(self.finish_process)
+        nav_layout.addStretch()
+        nav_layout.addWidget(finish_button)
+        layout.addLayout(nav_layout)
+
+        self.page4.setLayout(layout)
 
     def populate_clients(self):
         if not os.path.exists(CLIENT_BASE_PATH):
@@ -217,39 +241,89 @@ class MainWindow(QMainWindow):
         self.client_selector.clear()
         self.client_selector.addItems(client_dirs)
 
-    def on_client_selected(self, client_name):
-        self.alert_list.clear()
-        self.add_suppression_button.setEnabled(False)
-        self.simple_tune_button.setEnabled(False)
-        if not client_name:
-            return
+    def go_to_page1(self):
+        self.stacked_widget.setCurrentWidget(self.page1)
 
-        client_dir = os.path.join(CLIENT_BASE_PATH, client_name)
+    def go_to_page2(self):
+        self.selected_client = self.client_selector.currentText()
+        if not self.selected_client:
+            QMessageBox.warning(self, "Selection Required", "Please select a client.")
+            return
+        self.stacked_widget.setCurrentWidget(self.page2)
+
+    def go_to_page3(self):
+        # Load alerts for the selected client
+        client_dir = os.path.join(CLIENT_BASE_PATH, self.selected_client)
         if not os.path.exists(client_dir):
-            QMessageBox.critical(self, "Error", f"Client '{client_name}' does not exist.")
+            QMessageBox.critical(self, "Error", f"Client '{self.selected_client}' does not exist.")
             return
 
         ids = self.read_alerts_file(client_dir)
         if not ids:
-            QMessageBox.warning(self, "No Alerts", f"No valid alerts found for client '{client_name}'.")
-        else:
-            self.alert_list.addItems(ids)
-            self.add_suppression_button.setEnabled(True)
-            self.simple_tune_button.setEnabled(True)
-
-    def add_suppression(self):
-        client_name = self.client_selector.currentText()
-        alert_item = self.alert_list.currentItem()
-        alert_name = alert_item.text() if alert_item else None
-
-        if not client_name or not alert_name:
-            QMessageBox.warning(self, "Selection Required", "Please select a client and an alert.")
+            QMessageBox.warning(self, "No Alerts", f"No valid alerts found for client '{self.selected_client}'.")
             return
 
-        form_dialog = SuppressionFormDialog(self)
-        if form_dialog.exec() == QDialog.Accepted:
-            nms_ticket, reason, spl = form_dialog.get_inputs()
-            suppression_id = f"{nms_ticket}_{client_name}_{alert_name.replace(' ', '_').lower()}"
+        self.alert_list.clear()
+        self.alert_list.addItems(ids)
+
+        # Show/hide input fields based on action
+        if self.selected_action == "Add Suppression":
+            self.spl_input.show()
+            self.field_selector.hide()
+            self.value_input.hide()
+        elif self.selected_action == "Simple Tune":
+            self.spl_input.hide()
+            self.field_selector.show()
+            self.value_input.show()
+
+        self.stacked_widget.setCurrentWidget(self.page3)
+
+    def go_to_page4(self):
+        alert_item = self.alert_list.currentItem()
+        self.selected_alert = alert_item.text() if alert_item else None
+
+        if not self.selected_alert:
+            QMessageBox.warning(self, "Selection Required", "Please select an alert.")
+            return
+
+        if self.selected_action == "Add Suppression":
+            spl = self.spl_input.toPlainText().strip()
+            if not spl:
+                QMessageBox.warning(self, "Input Required", "Please enter an SPL query.")
+                return
+            self.scratch_pad.setPlainText(spl)
+        elif self.selected_action == "Simple Tune":
+            field = self.field_selector.currentText()
+            value = self.value_input.text().strip()
+            if not value:
+                QMessageBox.warning(self, "Input Required", "Please enter a value.")
+                return
+            # Generate SPL for simple tune
+            alert_id_snake_case = self.to_snake_case(self.selected_alert)
+            unix_time = int((datetime.now() + timedelta(weeks=1)).timestamp())
+            spl = f'`notable_index` source={alert_id_snake_case} {field}="{value}" _time > {unix_time}'
+            self.scratch_pad.setPlainText(spl)
+
+        self.stacked_widget.setCurrentWidget(self.page4)
+
+    def finish_process(self):
+        # Use the content from scratch pad as the SPL
+        spl = self.scratch_pad.toPlainText().strip()
+        if not spl:
+            QMessageBox.warning(self, "Input Required", "Scratch pad cannot be empty.")
+            return
+
+        if self.selected_action == "Add Suppression":
+            nms_ticket, ok = QInputDialog.getText(self, "NMS Ticket Number", "Enter NMS Ticket Number:")
+            if not ok or not nms_ticket.strip():
+                QMessageBox.warning(self, "Input Required", "NMS Ticket Number is required.")
+                return
+            reason, ok = QInputDialog.getText(self, "Reason", "Enter Reason:")
+            if not ok or not reason.strip():
+                QMessageBox.warning(self, "Input Required", "Reason is required.")
+                return
+
+            suppression_id = f"{nms_ticket}_{self.selected_client}_{self.selected_alert.replace(' ', '_').lower()}"
 
             new_suppression = CommentedMap({
                 'id': suppression_id,
@@ -268,36 +342,17 @@ class MainWindow(QMainWindow):
             # Preview suppression YAML
             if show_suppression_preview(formatted_yaml):
                 # Proceed with adding suppression to file
-                if self.update_suppressions_file(client_name, new_suppression):
+                if self.update_suppressions_file(self.selected_client, new_suppression):
                     # Git operations and push changes
                     branch_name = f"suppression_{nms_ticket}"
-                    if self.git_operations(client_name, nms_ticket, reason, branch_name):
+                    if self.git_operations(self.selected_client, nms_ticket, reason, branch_name):
                         QMessageBox.information(
                             self, "Success",
                             f"Suppression added and pushed to branch '{branch_name}'!"
                         )
-            else:
-                QMessageBox.information(self, "Cancelled", "Suppression creation cancelled.")
-
-    def simple_tune(self):
-        client_name = self.client_selector.currentText()
-        if not client_name:
-            QMessageBox.warning(self, "Selection Required", "Please select a client.")
-            return
-
-        alert_ids = [self.alert_list.item(i).text() for i in range(self.alert_list.count())]
-        if not alert_ids:
-            QMessageBox.warning(self, "No Alerts", "No alerts available to tune.")
-            return
-
-        simple_tune_dialog = SimpleTuneDialog(alert_ids, self)
-        if simple_tune_dialog.exec() == QDialog.Accepted:
-            alert_id, field, value = simple_tune_dialog.get_inputs()
-            alert_id_snake_case = self.to_snake_case(alert_id)
-            unix_time = int((datetime.now() + timedelta(weeks=1)).timestamp())
-            spl = f'`notable_index` source={alert_id_snake_case} {field}="{value}" _time > {unix_time}'
-
-            suppression_id = f"simple_tune_{alert_id_snake_case}_{field}_{value}"
+        elif self.selected_action == "Simple Tune":
+            # For simple tune, proceed with existing process
+            suppression_id = f"simple_tune_{self.to_snake_case(self.selected_alert)}_{self.field_selector.currentText()}_{self.value_input.text().strip()}"
 
             new_suppression = CommentedMap({
                 'id': suppression_id,
@@ -316,13 +371,33 @@ class MainWindow(QMainWindow):
             # Preview suppression YAML
             if show_suppression_preview(formatted_yaml):
                 # Proceed with adding suppression to file
-                if self.update_suppressions_file(client_name, new_suppression):
+                if self.update_suppressions_file(self.selected_client, new_suppression):
                     QMessageBox.information(
                         self, "Success",
-                        f"Simple tune suppression added for '{alert_id}' on field '{field}'!"
+                        f"Simple tune suppression added for '{self.selected_alert}'!"
                     )
-            else:
-                QMessageBox.information(self, "Cancelled", "Suppression creation cancelled.")
+
+        # Reset the application
+        self.reset_app()
+
+    def reset_app(self):
+        """Reset the application to initial state."""
+        self.selected_client = None
+        self.selected_action = None
+        self.selected_alert = None
+        self.scratch_pad.clear()
+        self.spl_input.clear()
+        self.field_selector.setCurrentIndex(0)
+        self.value_input.clear()
+        self.go_to_page1()
+
+    def select_add_suppression(self):
+        self.selected_action = "Add Suppression"
+        self.go_to_page3()
+
+    def select_simple_tune(self):
+        self.selected_action = "Simple Tune"
+        self.go_to_page3()
 
     def git_operations(self, client_name, nms_number, reason, branch_name):
         progress = QProgressDialog("Performing Git operations...", None, 0, 0, self)
