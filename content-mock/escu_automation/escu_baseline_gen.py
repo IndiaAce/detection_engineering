@@ -49,13 +49,13 @@ def create_macro_file(macro_name, macro_dir, content="```empty macro for tuning`
         'content': content
     }
     with open(macro_file_path, 'w') as f:
-        f.write(f"- id: {macro_content['id']}\n")
-        f.write(f"  catalog_type: {macro_content['catalog_type']}\n")
-        f.write(f"  content: >\n")
-        f.write(f"    {macro_content['content']}\n")
+        f.write(f"id: {macro_content['id']}\n")
+        f.write(f"catalog_type: {macro_content['catalog_type']}\n")
+        f.write(f"content: >\n")
+        f.write(f"  {macro_content['content']}\n")
     print(f"Created macro YML file: {macro_file_path}")
 
-def create_correlation_search_file(escu_id, title, description, mitre_attack_ids, tuning_macros, content, output_dir):
+def create_correlation_search_file(escu_id, title, description, mitre_attack_ids, tuning_macros, content, required_fields, output_dir):
     file_path = os.path.join(output_dir, f"{escu_id}.yml")
     correlation_search_content = {
         'id': escu_id,
@@ -66,7 +66,8 @@ def create_correlation_search_file(escu_id, title, description, mitre_attack_ids
         'authorization_scope': "detection",
         'throttle_timeframe': "14400s",
         'tuning_macros': tuning_macros,
-        'content': content
+        'content': content,
+        'required_fields': required_fields
     }
     with open(file_path, 'w') as f:
         f.write(f"id: {correlation_search_content['id']}\n")
@@ -81,6 +82,11 @@ def create_correlation_search_file(escu_id, title, description, mitre_attack_ids
         f.write(f"tuning_macros:\n")
         for macro in correlation_search_content['tuning_macros']:
             f.write(f"  - {macro}\n")
+        if correlation_search_content['required_fields']:
+            f.write(f"required_fields: {{\n")
+            for field in correlation_search_content['required_fields']:
+                f.write(f"  {field}: ~,\n")
+            f.write(f"}}\n")
         f.write(f"content: >\n")
         parts = re.split(r'(\|)', correlation_search_content['content'])
         current_line = ''
@@ -151,8 +157,21 @@ def process_filters_in_spl(spl_content, detection_id, macro_definitions):
     expanded_spl += f'\n| `{detection_id}_output_filter`'
     return expanded_spl
 
+def should_exclude_detection(detection):
+    search_content = detection.get('search', {})
+    if isinstance(search_content, dict):
+        original_search = search_content.get('search', '')
+    else:
+        original_search = search_content
+    if '| tstats' not in original_search:
+        print(f"Excluding detection {detection['name']} as it does not contain '| tstats'")
+        return True
+    return False
+
 def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, output_dir_base, user_entered_ttp, macro_definitions):
     for detection in detections:
+        if should_exclude_detection(detection):
+            continue
         name_snake_case = snake_case(detection['name'])
         detection_id = f"nh-aw_escu_{name_snake_case}"
         ttp_name = user_entered_ttp
@@ -174,6 +193,8 @@ def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, outp
         tuning_macros = [f"{detection_id}_input_filter", f"{detection_id}_output_filter"]
         create_macro_file(f"{detection_id}_input_filter", macro_dir_ttp)
         create_macro_file(f"{detection_id}_output_filter", macro_dir_ttp)
+        required_fields = detection.get('required_fields', [])
+        required_fields = [field for field in required_fields if field != '_time']
         create_correlation_search_file(
             escu_id=detection_id,
             title=detection['name'],
@@ -181,18 +202,15 @@ def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, outp
             mitre_attack_ids=detection['tags'].get('mitre_attack_id', []),
             tuning_macros=tuning_macros,
             content=modified_search,
+            required_fields=required_fields,
             output_dir=output_dir_ttp
         )
 
 def main():
-    # Adjust this path to the actual path where your security_content directory is located
-    repo_path = r"# Adjust this path to the actual path where your security_content directory is located"
-    # Path to the directory containing the global macros
+    repo_path = r"# path to \escu-baseline\security_content"
     global_macro_dir = os.path.join(repo_path, 'macros')
-    # Path to the base directory where macro YML files should be saved
-    macro_dir_base = r"# Path to the base directory where macro YML files should be saved"
-    # Path to the base directory where the final YAML files should be saved
-    output_dir_base = r" # Path to the base directory where the final YAML files should be saved"
+    macro_dir_base = r"#path to \escu-baseline\ESCU_Macros"
+    output_dir_base = r"#path to escu-baseline\ESCU_Detections"
     macro_definitions = load_macro_definitions(global_macro_dir)
     mitre_id = input("Enter the MITRE TTP ID (e.g., T1003 or T1003.001): ").strip()
     if not validate_mitre_id(mitre_id):
