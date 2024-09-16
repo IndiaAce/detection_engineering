@@ -207,10 +207,6 @@ def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, outp
         )
 
 def main():
-    repo_path = r"# path to \escu-baseline\security_content"
-    global_macro_dir = os.path.join(repo_path, 'macros')
-    macro_dir_base = r"#path to \escu-baseline\ESCU_Macros"
-    output_dir_base = r"#path to escu-baseline\ESCU_Detections"
     macro_definitions = load_macro_definitions(global_macro_dir)
     mitre_id = input("Enter the MITRE TTP ID (e.g., T1003 or T1003.001): ").strip()
     if not validate_mitre_id(mitre_id):
@@ -220,6 +216,7 @@ def main():
     if not detections:
         print(f"No detections found for MITRE TTP ID: {mitre_id}")
         return
+    # Add 'macro_definitions' argument to the function call
     organize_detections_by_id(detections, global_macro_dir, macro_dir_base, output_dir_base, mitre_id, macro_definitions)
     print("\nAll matched detections processed and saved successfully.")
 
