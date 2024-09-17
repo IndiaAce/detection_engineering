@@ -1,7 +1,6 @@
 import os
 import yaml
 import re
-
 EXCLUDED_MACROS = [
     r"nh-aw_shadow_package",
     r"nh-aw_macro_placeholder",
@@ -10,14 +9,11 @@ EXCLUDED_MACROS = [
     r"security_content_ctime\(lastTime\)",
     r"drop_dm_object_name\(.+\)"
 ]
-
 def snake_case(string):
     return re.sub(r'\W|^(?=\d)', "_", string).lower()
-
 def validate_mitre_id(mitre_id):
     """Validate the MITRE ID format."""
     return bool(re.match(r'^T\d{4}(\.\d{3})?$', mitre_id))
-
 def load_detections(repo_path, mitre_id):
     detections = []
     subdirectories = ['application', 'cloud', 'endpoint', 'network', 'web']
@@ -38,7 +34,6 @@ def load_detections(repo_path, mitre_id):
                             if mitre_id in mitre_ids:
                                 detections.append(detection)
     return detections
-
 def create_macro_file(macro_name, macro_dir, content="```empty macro for tuning```"):
     sanitized_macro_name = re.sub(r'[\\/*?:"<>|]', "_", macro_name)
     macro_file_path = os.path.join(macro_dir, f"{sanitized_macro_name}.yml")
@@ -54,7 +49,6 @@ def create_macro_file(macro_name, macro_dir, content="```empty macro for tuning`
         f.write(f"content: >\n")
         f.write(f"  {macro_content['content']}\n")
     print(f"Created macro YML file: {macro_file_path}")
-
 def create_correlation_search_file(escu_id, title, description, mitre_attack_ids, tuning_macros, content, required_fields, output_dir):
     file_path = os.path.join(output_dir, f"{escu_id}.yml")
     correlation_search_content = {
@@ -65,9 +59,9 @@ def create_correlation_search_file(escu_id, title, description, mitre_attack_ids
         'mitre_attack_id': mitre_attack_ids,
         'authorization_scope': "detection",
         'throttle_timeframe': "14400s",
+        'required_fields': required_fields,
         'tuning_macros': tuning_macros,
-        'content': content,
-        'required_fields': required_fields
+        'content': content
     }
     with open(file_path, 'w') as f:
         f.write(f"id: {correlation_search_content['id']}\n")
@@ -79,14 +73,14 @@ def create_correlation_search_file(escu_id, title, description, mitre_attack_ids
             f.write(f"  - {mitre_id}\n")
         f.write(f"authorization_scope: {correlation_search_content['authorization_scope']}\n")
         f.write(f"throttle_timeframe: {correlation_search_content['throttle_timeframe']}\n")
-        f.write(f"tuning_macros:\n")
-        for macro in correlation_search_content['tuning_macros']:
-            f.write(f"  - {macro}\n")
         if correlation_search_content['required_fields']:
             f.write(f"required_fields: {{\n")
             for field in correlation_search_content['required_fields']:
                 f.write(f"  {field}: ~,\n")
             f.write(f"}}\n")
+        f.write(f"tuning_macros:\n")
+        for macro in correlation_search_content['tuning_macros']:
+            f.write(f"  - {macro}\n")
         f.write(f"content: >\n")
         parts = re.split(r'(\|)', correlation_search_content['content'])
         current_line = ''
@@ -100,7 +94,6 @@ def create_correlation_search_file(escu_id, title, description, mitre_attack_ids
         if current_line.strip():
             f.write(f"  {current_line.strip()}\n")
     print(f"Created correlation search YML file: {file_path}")
-
 def load_macro_definitions(macro_dir):
     macro_definitions = {}
     for root, _, files in os.walk(macro_dir):
@@ -120,7 +113,6 @@ def load_macro_definitions(macro_dir):
                         continue
     print(f"Loaded Macros: {macro_definitions.keys()}")
     return macro_definitions
-
 def expand_macros_in_spl(spl_content, macro_definitions, excluded_macros):
     def replace_macro(match):
         macro_name = match.group(1)
@@ -133,7 +125,6 @@ def expand_macros_in_spl(spl_content, macro_definitions, excluded_macros):
         print(f"Macro not found for expansion: `{macro_name}`")
         return f'`{macro_name}`'
     return re.sub(r'`([^`]+)`', replace_macro, spl_content)
-
 def process_filters_in_spl(spl_content, detection_id, macro_definitions):
     lines = spl_content.strip().split('\n')
     new_lines = []
@@ -156,7 +147,6 @@ def process_filters_in_spl(spl_content, detection_id, macro_definitions):
     expanded_spl += f'\n| `{detection_id}_input_filter`'
     expanded_spl += f'\n| `{detection_id}_output_filter`'
     return expanded_spl
-
 def should_exclude_detection(detection):
     search_content = detection.get('search', {})
     if isinstance(search_content, dict):
@@ -167,7 +157,20 @@ def should_exclude_detection(detection):
         print(f"Excluding detection {detection['name']} as it does not contain '| tstats'")
         return True
     return False
-
+def extract_datamodel_name(spl_content):
+    """Extract the datamodel name from 'datamodel=<value>' in the SPL content."""
+    match = re.search(r'datamodel\s*=\s*([^\s]+)', spl_content)
+    if match:
+        datamodel_full = match.group(1)
+        datamodel_name = datamodel_full.split('.')[0]
+        return datamodel_name
+    else:
+        return None
+def get_required_fields(detection):
+    """Extract required fields from the detection."""
+    tags = detection.get('tags', {})
+    required_fields = tags.get('required_fields', [])
+    return required_fields
 def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, output_dir_base, user_entered_ttp, macro_definitions):
     for detection in detections:
         if should_exclude_detection(detection):
@@ -193,8 +196,11 @@ def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, outp
         tuning_macros = [f"{detection_id}_input_filter", f"{detection_id}_output_filter"]
         create_macro_file(f"{detection_id}_input_filter", macro_dir_ttp)
         create_macro_file(f"{detection_id}_output_filter", macro_dir_ttp)
-        required_fields = detection.get('required_fields', [])
+        required_fields = get_required_fields(detection)
         required_fields = [field for field in required_fields if field != '_time']
+        datamodel_name = extract_datamodel_name(original_search)
+        if datamodel_name:
+            required_fields = [f"{datamodel_name}.{field}" for field in required_fields]
         create_correlation_search_file(
             escu_id=detection_id,
             title=detection['name'],
@@ -205,8 +211,11 @@ def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, outp
             required_fields=required_fields,
             output_dir=output_dir_ttp
         )
-
 def main():
+    repo_path = r"\escu-baseline\security_content"
+    global_macro_dir = os.path.join(repo_path, 'macros')
+    macro_dir_base = r"\escu-baseline\ESCU_Macros"
+    output_dir_base = r"\escu-baseline\ESCU_Detections"
     macro_definitions = load_macro_definitions(global_macro_dir)
     mitre_id = input("Enter the MITRE TTP ID (e.g., T1003 or T1003.001): ").strip()
     if not validate_mitre_id(mitre_id):
@@ -216,9 +225,7 @@ def main():
     if not detections:
         print(f"No detections found for MITRE TTP ID: {mitre_id}")
         return
-    # Add 'macro_definitions' argument to the function call
     organize_detections_by_id(detections, global_macro_dir, macro_dir_base, output_dir_base, mitre_id, macro_definitions)
     print("\nAll matched detections processed and saved successfully.")
-
 if __name__ == "__main__":
     main()
