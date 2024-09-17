@@ -10,7 +10,12 @@ EXCLUDED_MACROS = [
     r"drop_dm_object_name\(.+\)"
 ]
 def snake_case(string):
-    return re.sub(r'\W|^(?=\d)', "_", string).lower()
+    # Replace non-word characters or leading digits with underscores
+    string = re.sub(r'\W|^(?=\d)', "_", string).lower()
+    # Replace multiple underscores with a single underscore
+    string = re.sub(r'_+', "_", string)
+    return string
+
 def validate_mitre_id(mitre_id):
     """Validate the MITRE ID format."""
     return bool(re.match(r'^T\d{4}(\.\d{3})?$', mitre_id))
@@ -49,11 +54,12 @@ def create_macro_file(macro_name, macro_dir, content="```empty macro for tuning`
         f.write(f"content: >\n")
         f.write(f"  {macro_content['content']}\n")
     print(f"Created macro YML file: {macro_file_path}")
-def create_correlation_search_file(escu_id, title, description, mitre_attack_ids, tuning_macros, content, required_fields, output_dir):
+def create_correlation_search_file(escu_id, title, splunk_escu_id, description, mitre_attack_ids, tuning_macros, content, required_fields, output_dir):
     file_path = os.path.join(output_dir, f"{escu_id}.yml")
     correlation_search_content = {
         'id': escu_id,
         'title': escu_id,
+        'splunk_escu_id': splunk_escu_id,
         'catalog_type': "correlation_search",
         'description': description,
         'mitre_attack_id': mitre_attack_ids,
@@ -66,6 +72,7 @@ def create_correlation_search_file(escu_id, title, description, mitre_attack_ids
     with open(file_path, 'w') as f:
         f.write(f"id: {correlation_search_content['id']}\n")
         f.write(f"title: {correlation_search_content['title']}\n")
+        f.write(f"splunk_escu_id: {correlation_search_content['splunk_escu_id']}\n")
         f.write(f"catalog_type: {correlation_search_content['catalog_type']}\n")
         f.write(f"description: >\n  {correlation_search_content['description']}\n")
         f.write(f"mitre_attack_id:\n")
@@ -168,6 +175,7 @@ def extract_datamodel_name(spl_content):
         return None
 def get_required_fields(detection):
     """Extract required fields from the detection."""
+    # Now extracting 'required_fields' from 'tags'
     tags = detection.get('tags', {})
     required_fields = tags.get('required_fields', [])
     return required_fields
@@ -175,6 +183,8 @@ def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, outp
     for detection in detections:
         if should_exclude_detection(detection):
             continue
+        # Get the original ESCU id
+        splunk_escu_id = detection.get('id', '')
         name_snake_case = snake_case(detection['name'])
         detection_id = f"nh-aw_escu_{name_snake_case}"
         ttp_name = user_entered_ttp
@@ -203,7 +213,8 @@ def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, outp
             required_fields = [f"{datamodel_name}.{field}" for field in required_fields]
         create_correlation_search_file(
             escu_id=detection_id,
-            title=detection['name'],
+            title=detection_id,  # Using detection_id as title
+            splunk_escu_id=splunk_escu_id,
             description=detection.get('description', ''),
             mitre_attack_ids=detection['tags'].get('mitre_attack_id', []),
             tuning_macros=tuning_macros,
@@ -212,10 +223,10 @@ def organize_detections_by_id(detections, global_macro_dir, macro_dir_base, outp
             output_dir=output_dir_ttp
         )
 def main():
-    repo_path = r"\escu-baseline\security_content"
+    repo_path = r"escu-baseline\security_content"
     global_macro_dir = os.path.join(repo_path, 'macros')
-    macro_dir_base = r"\escu-baseline\ESCU_Macros"
-    output_dir_base = r"\escu-baseline\ESCU_Detections"
+    macro_dir_base = r"escu-baseline\ESCU_Macros"
+    output_dir_base = r"escu-baseline\ESCU_Detections"
     macro_definitions = load_macro_definitions(global_macro_dir)
     mitre_id = input("Enter the MITRE TTP ID (e.g., T1003 or T1003.001): ").strip()
     if not validate_mitre_id(mitre_id):
