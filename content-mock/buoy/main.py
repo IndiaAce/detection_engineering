@@ -9,8 +9,7 @@ from ruamel.yaml.scalarstring import FoldedScalarString, PlainScalarString
 from ruamel.yaml.comments import CommentedMap
 import re
 from io import StringIO
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from flask import Flask, render_template_string, request, redirect, url_for, flash, Response
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,29 +18,16 @@ logging.basicConfig(level=logging.INFO)
 config = configparser.ConfigParser()
 config.read('config.ini')
 
-CLIENT_BASE_PATH = config.get('Paths', 'ClientBasePath', fallback='./client/')
-GIT_REPO_PATH = config.get('Paths', 'GitRepoPath', fallback='.')
+# Set CLIENT_BASE_PATH to the specified directory
+CLIENT_BASE_PATH = config.get('Paths', 'ClientBasePath', fallback='/workspaces/content-live/client/')
 CURRENT_USER = subprocess.getoutput('whoami')
 
 # Initialize YAML object
 yaml_ruamel = YAML()
 yaml_ruamel.preserve_quotes = True  # Ensure quotes are preserved
 
-def run_git_command(command, cwd=None):
-    """Runs a git command in the specified directory."""
-    if cwd is None:
-        cwd = GIT_REPO_PATH
-    logging.info(f"Running git command: {command}")
-    try:
-        result = subprocess.run(
-            command, cwd=cwd, shell=True, check=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        return result.stdout.decode().strip()
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Git command failed: {e.stderr.decode().strip()}")
-        messagebox.showerror("Git Error", f"Command '{command}' failed:\n{e.stderr.decode().strip()}")
-        return None
+app = Flask(__name__)
+app.secret_key = 'your_secret_key'  # Replace with your own secret key for session management
 
 def format_yaml_string(yaml_string):
     """Formats the YAML string to correct style issues."""
@@ -49,457 +35,308 @@ def format_yaml_string(yaml_string):
     yaml_string = yaml_string.replace(">-\n", ">\n")
     return yaml_string
 
-def show_suppression_preview(suppression_yaml):
-    """Displays a dialog to preview the suppression YAML."""
-    dialog = tk.Toplevel()
-    dialog.title("Preview Suppression")
-    dialog.geometry("600x400")
+def to_snake_case(text):
+    return text.lower().replace(' ', '_')
 
-    text_edit = tk.Text(dialog)
-    text_edit.insert("1.0", suppression_yaml)
-    text_edit.config(state=tk.DISABLED)
-    text_edit.pack(fill=tk.BOTH, expand=True)
+def update_suppressions_file(client_name, new_suppression):
+    client_dir = os.path.join(CLIENT_BASE_PATH, client_name)
+    suppressions_file = os.path.join(client_dir, 'suppressions.yml')
 
-    def on_ok():
-        dialog.destroy()
-        dialog.result = True
+    # Ensure the client directory exists
+    if not os.path.exists(client_dir):
+        os.makedirs(client_dir)
 
-    def on_cancel():
-        dialog.destroy()
-        dialog.result = False
+    # Load existing suppressions or initialize a new structure
+    if os.path.exists(suppressions_file):
+        with open(suppressions_file, 'r') as file:
+            data = yaml_ruamel.load(file) or {'suppression': {'include': []}}
+    else:
+        data = {'suppression': {'include': []}}
 
-    button_frame = tk.Frame(dialog)
-    button_frame.pack(pady=5)
+    # Add the new suppression to the list
+    data['suppression']['include'].append(new_suppression)
 
-    ok_button = tk.Button(button_frame, text="OK", command=on_ok)
-    cancel_button = tk.Button(button_frame, text="Cancel", command=on_cancel)
-    ok_button.pack(side=tk.LEFT, padx=5)
-    cancel_button.pack(side=tk.RIGHT, padx=5)
+    # Serialize the YAML to a string using a temporary stream
+    stream = StringIO()
+    yaml_ruamel.dump(data, stream)
+    yaml_string = stream.getvalue()
 
-    dialog.transient()
-    dialog.grab_set()
-    dialog.wait_window()
-    return getattr(dialog, 'result', False)
+    # Format the YAML string
+    formatted_yaml = format_yaml_string(yaml_string)
 
-class MainWindow(tk.Tk):
-    """Main window of the application with navigation."""
-    def __init__(self):
-        super().__init__()
-        self.title("Buoy - Detection Tuning Tool")
-        self.selected_client = None
-        self.selected_action = None
-        self.selected_alert = None
-        self.scratch_pad_content = ""
-        self.setup_ui()
-        self.populate_clients()
+    # Write back to the file
+    with open(suppressions_file, 'w') as file:
+        file.write(formatted_yaml)
 
-    def setup_ui(self):
-        # Create frames for each page
-        self.pages = {}
-        self.current_page = None
+    return True
 
-        self.page1 = tk.Frame(self)
-        self.page2 = tk.Frame(self)
-        self.page3 = tk.Frame(self)
-        self.page4 = tk.Frame(self)
+def read_alerts_file(client_dir):
+    alerts_file = os.path.join(client_dir, 'alerts.yml')
+    if not os.path.exists(alerts_file):
+        return []
+    try:
+        with open(alerts_file, 'r') as file:
+            data = yaml.safe_load(file) or {}
+    except yaml.YAMLError as e:
+        logging.error(f"Error reading alerts file: {e}")
+        return []
 
-        self.pages[1] = self.page1
-        self.pages[2] = self.page2
-        self.pages[3] = self.page3
-        self.pages[4] = self.page4
+    alerts = data.get('alert', {}).get('include', [])
+    return [
+        alert['id'].replace('_', ' ').title()
+        for alert in alerts if alert.get('remove_shadow', False)
+    ]
 
-        self.setup_page1()
-        self.setup_page2()
-        self.setup_page3()
-        self.setup_page4()
-
-        self.go_to_page(1)
-
-        # Menu bar for settings
-        menubar = tk.Menu(self)
-        self.config(menu=menubar)
-
-        settings_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Settings", menu=settings_menu)
-
-        settings_menu.add_command(label="Export Suppressions", command=self.export_suppressions)
-
-    def setup_page1(self):
-        """Setup for Page 1: Client Selection."""
-        frame = self.page1
-        label = tk.Label(frame, text="Select Client:")
-        label.pack(pady=10)
-
-        self.client_selector = ttk.Combobox(frame)
-        self.client_selector.pack(pady=5)
-
-        # Navigation buttons
-        nav_frame = tk.Frame(frame)
-        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-
-        next_button = tk.Button(nav_frame, text="Next", command=self.go_to_page2)
-        next_button.pack(side=tk.RIGHT, padx=5)
-
-    def setup_page2(self):
-        """Setup for Page 2: Action Selection."""
-        frame = self.page2
-        label = tk.Label(frame, text="Choose Action:")
-        label.pack(pady=10)
-
-        self.add_suppression_button = tk.Button(frame, text="Add Suppression", command=self.select_add_suppression)
-        self.add_suppression_button.pack(pady=5)
-
-        self.simple_tune_button = tk.Button(frame, text="Simple Tune", command=self.select_simple_tune)
-        self.simple_tune_button.pack(pady=5)
-
-        # Navigation buttons
-        nav_frame = tk.Frame(frame)
-        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-
-        back_button = tk.Button(nav_frame, text="Back", command=self.go_to_page1)
-        back_button.pack(side=tk.LEFT, padx=5)
-
-    def setup_page3(self):
-        """Setup for Page 3: Alert Selection and Action Input."""
-        frame = self.page3
-        label = tk.Label(frame, text="Select Alert:")
-        label.pack(pady=10)
-
-        self.alert_list = tk.Listbox(frame, height=10)
-        self.alert_list.pack(pady=5, fill=tk.BOTH, expand=True)
-
-        # For Add Suppression action
-        self.spl_input = tk.Text(frame, height=5)
-        self.spl_input.pack(pady=5)
-        self.spl_input.pack_forget()  # Hide initially
-
-        # For Simple Tune action
-        self.field_selector_label = tk.Label(frame, text="Select Field:")
-        self.field_selector = ttk.Combobox(frame, values=["dest", "host", "user"])
-        self.value_input = tk.Entry(frame)
-        self.field_selector_label.pack()
-        self.field_selector.pack(pady=5)
-        self.value_input.pack(pady=5)
-        self.field_selector_label.pack_forget()
-        self.field_selector.pack_forget()
-        self.value_input.pack_forget()
-
-        # Navigation buttons
-        nav_frame = tk.Frame(frame)
-        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-
-        back_button = tk.Button(nav_frame, text="Back", command=self.go_to_page2)
-        back_button.pack(side=tk.LEFT, padx=5)
-
-        next_button = tk.Button(nav_frame, text="Next", command=self.go_to_page4)
-        next_button.pack(side=tk.RIGHT, padx=5)
-
-    def setup_page4(self):
-        """Setup for Page 4: Scratch Pad and Confirmation."""
-        frame = self.page4
-        label = tk.Label(frame, text="Scratch Pad:")
-        label.pack(pady=10)
-
-        self.scratch_pad = tk.Text(frame, height=15)
-        self.scratch_pad.pack(pady=5, fill=tk.BOTH, expand=True)
-
-        # Navigation buttons
-        nav_frame = tk.Frame(frame)
-        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-
-        back_button = tk.Button(nav_frame, text="Back", command=self.go_to_page3)
-        back_button.pack(side=tk.LEFT, padx=5)
-
-        finish_button = tk.Button(nav_frame, text="Finish", command=self.finish_process)
-        finish_button.pack(side=tk.RIGHT, padx=5)
-
-    def go_to_page(self, page_number):
-        if self.current_page:
-            self.current_page.pack_forget()
-        self.current_page = self.pages[page_number]
-        self.current_page.pack(fill=tk.BOTH, expand=True)
-
-    def go_to_page1(self):
-        self.go_to_page(1)
-
-    def go_to_page2(self):
-        self.selected_client = self.client_selector.get()
-        if not self.selected_client:
-            messagebox.showwarning("Selection Required", "Please select a client.")
-            return
-        self.go_to_page(2)
-
-    def go_to_page3(self):
-        # Load alerts for the selected client
-        client_dir = os.path.join(CLIENT_BASE_PATH, self.selected_client)
-        if not os.path.exists(client_dir):
-            messagebox.showerror("Error", f"Client '{self.selected_client}' does not exist.")
-            return
-
-        ids = self.read_alerts_file(client_dir)
-        if not ids:
-            messagebox.showwarning("No Alerts", f"No valid alerts found for client '{self.selected_client}'.")
-            return
-
-        self.alert_list.delete(0, tk.END)
-        for alert_id in ids:
-            self.alert_list.insert(tk.END, alert_id)
-
-        # Show/hide input fields based on action
-        if self.selected_action == "Add Suppression":
-            self.spl_input.pack()
-            self.field_selector_label.pack_forget()
-            self.field_selector.pack_forget()
-            self.value_input.pack_forget()
-        elif self.selected_action == "Simple Tune":
-            self.spl_input.pack_forget()
-            self.field_selector_label.pack()
-            self.field_selector.pack()
-            self.value_input.pack()
-
-        self.go_to_page(3)
-
-    def go_to_page4(self):
-        selection = self.alert_list.curselection()
-        if selection:
-            self.selected_alert = self.alert_list.get(selection[0])
+@app.route('/', methods=['GET', 'POST'])
+def select_client():
+    if request.method == 'POST':
+        client = request.form.get('client')
+        if not client:
+            flash('Please select a client.', 'warning')
+            return redirect(url_for('select_client'))
+        return redirect(url_for('select_action', client=client))
+    else:
+        if not os.path.exists(CLIENT_BASE_PATH):
+            flash(f"Client base path '{CLIENT_BASE_PATH}' does not exist.", 'error')
+            clients = []
         else:
-            self.selected_alert = None
+            clients = [
+                d for d in os.listdir(CLIENT_BASE_PATH)
+                if os.path.isdir(os.path.join(CLIENT_BASE_PATH, d))
+            ]
+        return render_template_string(TEMPLATE_SELECT_CLIENT, clients=clients)
 
-        if not self.selected_alert:
-            messagebox.showwarning("Selection Required", "Please select an alert.")
-            return
+@app.route('/action/<client>', methods=['GET', 'POST'])
+def select_action(client):
+    if request.method == 'POST':
+        action = request.form.get('action')
+        if not action:
+            flash('Please select an action.', 'warning')
+            return redirect(url_for('select_action', client=client))
+        return redirect(url_for('alert_selection', client=client, action=action))
+    else:
+        return render_template_string(TEMPLATE_SELECT_ACTION, client=client)
 
-        if self.selected_action == "Add Suppression":
-            spl = self.spl_input.get("1.0", tk.END).strip()
+@app.route('/alerts/<client>/<action>', methods=['GET', 'POST'])
+def alert_selection(client, action):
+    client_dir = os.path.join(CLIENT_BASE_PATH, client)
+    if not os.path.exists(client_dir):
+        flash(f"Client '{client}' does not exist.", 'error')
+        return redirect(url_for('select_client'))
+
+    alerts = read_alerts_file(client_dir)
+    if not alerts:
+        flash(f"No valid alerts found for client '{client}'.", 'warning')
+        alerts = []
+
+    if request.method == 'POST':
+        alert = request.form.get('alert')
+        if not alert:
+            flash('Please select an alert.', 'warning')
+            return redirect(url_for('alert_selection', client=client, action=action))
+
+        if action == 'Add Suppression':
+            spl = request.form.get('spl').strip()
             if not spl:
-                messagebox.showwarning("Input Required", "Please enter an SPL query.")
-                return
-            self.scratch_pad.delete("1.0", tk.END)
-            self.scratch_pad.insert("1.0", spl)
-        elif self.selected_action == "Simple Tune":
-            field = self.field_selector.get()
-            value = self.value_input.get().strip()
+                flash('Please enter an SPL query.', 'warning')
+                return redirect(url_for('alert_selection', client=client, action=action))
+            return redirect(url_for('preview_suppression', client=client, action=action, alert=alert, spl=spl))
+        elif action == 'Simple Tune':
+            field = request.form.get('field')
+            value = request.form.get('value').strip()
             if not value:
-                messagebox.showwarning("Input Required", "Please enter a value.")
-                return
+                flash('Please enter a value.', 'warning')
+                return redirect(url_for('alert_selection', client=client, action=action))
             # Generate SPL for simple tune
-            alert_id_snake_case = self.to_snake_case(self.selected_alert)
+            alert_id_snake_case = to_snake_case(alert)
             unix_time = int((datetime.now() + timedelta(weeks=1)).timestamp())
             spl = f'`notable_index` source={alert_id_snake_case} {field}="{value}" _time > {unix_time}'
-            self.scratch_pad.delete("1.0", tk.END)
-            self.scratch_pad.insert("1.0", spl)
+            # Pass field and value as query parameters for later use
+            return redirect(url_for('preview_suppression', client=client, action=action, alert=alert, spl=spl, field=field, value=value))
+    else:
+        return render_template_string(TEMPLATE_ALERT_SELECTION, client=client, action=action, alerts=alerts)
 
-        self.go_to_page(4)
-
-    def finish_process(self):
-        # Use the content from scratch pad as the SPL
-        spl = self.scratch_pad.get("1.0", tk.END).strip()
-        if not spl:
-            messagebox.showwarning("Input Required", "Scratch pad cannot be empty.")
-            return
-
-        if self.selected_action == "Add Suppression":
-            nms_ticket = simpledialog.askstring("NMS Ticket Number", "Enter NMS Ticket Number:")
-            if not nms_ticket:
-                messagebox.showwarning("Input Required", "NMS Ticket Number is required.")
-                return
-            reason = simpledialog.askstring("Reason", "Enter Reason:")
-            if not reason:
-                messagebox.showwarning("Input Required", "Reason is required.")
-                return
-
-            suppression_id = f"{nms_ticket}_{self.selected_client}_{self.selected_alert.replace(' ', '_').lower()}"
-
-            new_suppression = CommentedMap({
-                'id': suppression_id,
-                'properties': CommentedMap({
-                    PlainScalarString('# Creator of suppression'): CURRENT_USER,
-                    'owner': 'nobody',
-                    'search': FoldedScalarString(spl)
+@app.route('/preview/<client>/<action>/<alert>', methods=['GET', 'POST'])
+def preview_suppression(client, action, alert):
+    spl = request.args.get('spl', '')
+    field = request.args.get('field', '')
+    value = request.args.get('value', '')
+    if request.method == 'POST':
+        if 'confirm' in request.form:
+            if action == 'Add Suppression':
+                nms_ticket = request.form.get('nms_ticket').strip()
+                if not nms_ticket:
+                    flash('NMS Ticket Number is required.', 'warning')
+                    return redirect(url_for('preview_suppression', client=client, action=action, alert=alert, spl=spl))
+                reason = request.form.get('reason').strip()
+                if not reason:
+                    flash('Reason is required.', 'warning')
+                    return redirect(url_for('preview_suppression', client=client, action=action, alert=alert, spl=spl))
+                suppression_id = f"{nms_ticket}_{client}_{alert.replace(' ', '_').lower()}"
+                new_suppression = CommentedMap({
+                    'id': suppression_id,
+                    'properties': CommentedMap({
+                        PlainScalarString('# Creator of suppression'): CURRENT_USER,
+                        'owner': 'nobody',
+                        'search': FoldedScalarString(spl)
+                    })
                 })
-            })
 
-            # Use StringIO to capture the YAML output
-            stream = StringIO()
-            yaml_ruamel.dump(new_suppression, stream)
-            formatted_yaml = format_yaml_string(stream.getvalue())
+                # Use StringIO to capture the YAML output
+                stream = StringIO()
+                yaml_ruamel.dump(new_suppression, stream)
+                formatted_yaml = format_yaml_string(stream.getvalue())
 
-            # Preview suppression YAML
-            if show_suppression_preview(formatted_yaml):
-                # Proceed with adding suppression to file
-                if self.update_suppressions_file(self.selected_client, new_suppression):
-                    # Git operations and push changes
-                    branch_name = f"suppression_{nms_ticket}"
-                    if self.git_operations(self.selected_client, nms_ticket, reason, branch_name):
-                        messagebox.showinfo("Success", f"Suppression added and pushed to branch '{branch_name}'!")
-        elif self.selected_action == "Simple Tune":
-            # For simple tune, proceed with existing process
-            suppression_id = f"simple_tune_{self.to_snake_case(self.selected_alert)}_{self.field_selector.get()}_{self.value_input.get().strip()}"
-
-            new_suppression = CommentedMap({
-                'id': suppression_id,
-                'properties': CommentedMap({
-                    PlainScalarString('# Creator of suppression'): CURRENT_USER,
-                    'owner': 'nobody',
-                    'search': FoldedScalarString(spl)
+                # Update suppressions file
+                if update_suppressions_file(client, new_suppression):
+                    flash(f"Suppression added for '{alert}'!", 'success')
+                    return redirect(url_for('select_client'))
+            elif action == 'Simple Tune':
+                suppression_id = f"simple_tune_{to_snake_case(alert)}_{field}_{value}"
+                new_suppression = CommentedMap({
+                    'id': suppression_id,
+                    'properties': CommentedMap({
+                        PlainScalarString('# Creator of suppression'): CURRENT_USER,
+                        'owner': 'nobody',
+                        'search': FoldedScalarString(spl)
+                    })
                 })
-            })
 
-            # Use StringIO to capture the YAML output
-            stream = StringIO()
-            yaml_ruamel.dump(new_suppression, stream)
-            formatted_yaml = format_yaml_string(stream.getvalue())
+                # Use StringIO to capture the YAML output
+                stream = StringIO()
+                yaml_ruamel.dump(new_suppression, stream)
+                formatted_yaml = format_yaml_string(stream.getvalue())
 
-            # Preview suppression YAML
-            if show_suppression_preview(formatted_yaml):
-                # Proceed with adding suppression to file
-                if self.update_suppressions_file(self.selected_client, new_suppression):
-                    messagebox.showinfo("Success", f"Simple tune suppression added for '{self.selected_alert}'!")
-
-        # Reset the application
-        self.reset_app()
-
-    def reset_app(self):
-        """Reset the application to initial state."""
-        self.selected_client = None
-        self.selected_action = None
-        self.selected_alert = None
-        self.scratch_pad.delete("1.0", tk.END)
-        self.spl_input.delete("1.0", tk.END)
-        self.field_selector.set("")
-        self.value_input.delete(0, tk.END)
-        self.go_to_page1()
-
-    def select_add_suppression(self):
-        self.selected_action = "Add Suppression"
-        self.go_to_page3()
-
-    def select_simple_tune(self):
-        self.selected_action = "Simple Tune"
-        self.go_to_page3()
-
-    def git_operations(self, client_name, nms_number, reason, branch_name):
-        progress = tk.Toplevel(self)
-        progress.title("Performing Git operations...")
-        label = tk.Label(progress, text="Please wait...")
-        label.pack(pady=10)
-        self.update()
-
-        try:
-            if not run_git_command('git checkout main'):
-                return False
-            if not run_git_command('git pull'):
-                return False
-            if not run_git_command(f'git checkout -b {branch_name}'):
-                return False
-
-            if not run_git_command(f'git add {os.path.join(CLIENT_BASE_PATH, client_name)}'):
-                return False
-
-            commit_message = f'{nms_number}: {reason}'
-            if not run_git_command(f'git commit -m "{commit_message}"'):
-                return False
-
-            if not run_git_command(f'git push -u origin {branch_name}'):
-                return False
-
-            return True
-        finally:
-            progress.destroy()
-
-    def to_snake_case(self, text):
-        return text.lower().replace(' ', '_')
-
-    def update_suppressions_file(self, client_name, new_suppression):
-        client_dir = os.path.join(CLIENT_BASE_PATH, client_name)
-        suppressions_file = os.path.join(client_dir, 'suppressions.yml')
-
-        # Ensure the client directory exists
-        if not os.path.exists(client_dir):
-            os.makedirs(client_dir)
-
-        # Load existing suppressions or initialize a new structure
-        if os.path.exists(suppressions_file):
-            with open(suppressions_file, 'r') as file:
-                data = yaml_ruamel.load(file) or {'suppression': {'include': []}}
+                # Update suppressions file
+                if update_suppressions_file(client, new_suppression):
+                    flash(f"Simple tune suppression added for '{alert}'!", 'success')
+                    return redirect(url_for('select_client'))
         else:
-            data = {'suppression': {'include': []}}
+            return redirect(url_for('alert_selection', client=client, action=action))
+    else:
+        return render_template_string(TEMPLATE_PREVIEW_SUPPRESSION, client=client, action=action, alert=alert, spl=spl, field=field, value=value)
 
-        # Add the new suppression to the list
-        data['suppression']['include'].append(new_suppression)
+@app.route('/export', methods=['GET', 'POST'])
+def export_suppressions():
+    if request.method == 'POST':
+        client = request.form.get('client')
+        if not client:
+            flash('Please select a client to export suppressions.', 'warning')
+            return redirect(url_for('export_suppressions'))
 
-        # Serialize the YAML to a string using a temporary stream
-        stream = StringIO()
-        yaml_ruamel.dump(data, stream)
-        yaml_string = stream.getvalue()
-
-        # Format the YAML string
-        formatted_yaml = format_yaml_string(yaml_string)
-
-        # Write back to the file
-        with open(suppressions_file, 'w') as file:
-            file.write(formatted_yaml)
-
-        return True
-
-    def read_alerts_file(self, client_dir):
-        alerts_file = os.path.join(client_dir, 'alerts.yml')
-        if not os.path.exists(alerts_file):
-            return []
-        try:
-            with open(alerts_file, 'r') as file:
-                data = yaml.safe_load(file) or {}
-        except yaml.YAMLError as e:
-            logging.error(f"Error reading alerts file: {e}")
-            return []
-
-        alerts = data.get('alert', {}).get('include', [])
-        return [
-            alert['id'].replace('_', ' ').title()
-            for alert in alerts if alert.get('remove_shadow', False)
-        ]
-
-    def export_suppressions(self):
-        client_name = self.client_selector.get()
-        if not client_name:
-            messagebox.showwarning("Selection Required", "Please select a client to export suppressions.")
-            return
-
-        client_dir = os.path.join(CLIENT_BASE_PATH, client_name)
+        client_dir = os.path.join(CLIENT_BASE_PATH, client)
         suppressions_file = os.path.join(client_dir, 'suppressions.yml')
         if not os.path.exists(suppressions_file):
-            messagebox.showwarning("No Suppressions", f"No suppressions found for client '{client_name}'.")
-            return
+            flash(f"No suppressions found for client '{client}'.", 'warning')
+            return redirect(url_for('export_suppressions'))
 
-        save_path = filedialog.asksaveasfilename(
-            title="Save Suppressions As",
-            defaultextension=".yml",
-            initialfile=f"{client_name}_suppressions.yml",
-            filetypes=[("YAML Files", "*.yml *.yaml")])
-        if save_path:
-            try:
-                with open(suppressions_file, 'r') as src, open(save_path, 'w') as dst:
-                    dst.write(src.read())
-                messagebox.showinfo("Export Successful", f"Suppressions exported to '{save_path}'.")
-            except Exception as e:
-                logging.error(f"Error exporting suppressions: {e}")
-                messagebox.showerror("Export Failed", "An error occurred while exporting suppressions.")
+        # Read the suppressions file
+        with open(suppressions_file, 'r') as f:
+            suppressions_content = f.read()
 
-    def populate_clients(self):
+        # Serve the file content as a download
+        return Response(
+            suppressions_content,
+            mimetype='text/yaml',
+            headers={'Content-Disposition': f'attachment;filename={client}_suppressions.yml'}
+        )
+    else:
         if not os.path.exists(CLIENT_BASE_PATH):
-            messagebox.showerror("Error", f"Client base path '{CLIENT_BASE_PATH}' does not exist.")
-            return
-        client_dirs = [
-            d for d in os.listdir(CLIENT_BASE_PATH)
-            if os.path.isdir(os.path.join(CLIENT_BASE_PATH, d))
-        ]
-        self.client_selector['values'] = client_dirs
+            flash(f"Client base path '{CLIENT_BASE_PATH}' does not exist.", 'error')
+            clients = []
+        else:
+            clients = [
+                d for d in os.listdir(CLIENT_BASE_PATH)
+                if os.path.isdir(os.path.join(CLIENT_BASE_PATH, d))
+            ]
+        return render_template_string(TEMPLATE_EXPORT_SUPPRESSIONS, clients=clients)
 
-def main():
-    app = MainWindow()
-    app.geometry("600x500")
-    app.mainloop()
+# Templates (as multi-line strings)
+TEMPLATE_SELECT_CLIENT = '''
+<!doctype html>
+<title>Select Client</title>
+<h1>Select Client</h1>
+<form method=post>
+  <select name="client">
+    <option value="">--Select Client--</option>
+    {% for client in clients %}
+    <option value="{{ client }}">{{ client }}</option>
+    {% endfor %}
+  </select>
+  <br><br>
+  <input type=submit value=Next>
+</form>
+'''
+
+TEMPLATE_SELECT_ACTION = '''
+<!doctype html>
+<title>Select Action</title>
+<h1>Select Action for {{ client }}</h1>
+<form method=post>
+  <input type="radio" name="action" value="Add Suppression"> Add Suppression<br>
+  <input type="radio" name="action" value="Simple Tune"> Simple Tune<br><br>
+  <input type=submit value=Next>
+</form>
+'''
+
+TEMPLATE_ALERT_SELECTION = '''
+<!doctype html>
+<title>Select Alert</title>
+<h1>Select Alert for {{ client }}</h1>
+<form method=post>
+  <select name="alert">
+    <option value="">--Select Alert--</option>
+    {% for alert in alerts %}
+    <option value="{{ alert }}">{{ alert }}</option>
+    {% endfor %}
+  </select>
+  <br><br>
+  {% if action == 'Add Suppression' %}
+    <textarea name="spl" rows="5" cols="50" placeholder="Enter SPL Query here..."></textarea><br><br>
+  {% elif action == 'Simple Tune' %}
+    Select Field:
+    <select name="field">
+      <option value="dest">dest</option>
+      <option value="host">host</option>
+      <option value="user">user</option>
+    </select><br><br>
+    Value:
+    <input type="text" name="value"><br><br>
+  {% endif %}
+  <input type=submit value=Next>
+</form>
+'''
+
+TEMPLATE_PREVIEW_SUPPRESSION = '''
+<!doctype html>
+<title>Preview Suppression</title>
+<h1>Preview Suppression</h1>
+<pre>{{ spl }}</pre>
+<form method=post>
+  {% if action == 'Add Suppression' %}
+    NMS Ticket Number: <input type="text" name="nms_ticket"><br><br>
+    Reason: <input type="text" name="reason"><br><br>
+  {% endif %}
+  <button name="confirm" type="submit">Confirm</button>
+  <button name="cancel" type="submit">Cancel</button>
+</form>
+'''
+
+TEMPLATE_EXPORT_SUPPRESSIONS = '''
+<!doctype html>
+<title>Export Suppressions</title>
+<h1>Export Suppressions</h1>
+<form method=post>
+  <select name="client">
+    <option value="">--Select Client--</option>
+    {% for client in clients %}
+    <option value="{{ client }}">{{ client }}</option>
+    {% endfor %}
+  </select>
+  <br><br>
+  <input type=submit value=Export>
+</form>
+'''
 
 if __name__ == '__main__':
-    main()
+    app.run(host='0.0.0.0', port=5000)
