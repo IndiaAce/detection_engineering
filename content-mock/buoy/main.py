@@ -7,16 +7,10 @@ from datetime import datetime, timedelta
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import FoldedScalarString, PlainScalarString
 from ruamel.yaml.comments import CommentedMap
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QComboBox, QListWidget, QVBoxLayout, QWidget,
-    QMessageBox, QPushButton, QFormLayout, QLineEdit, QDialog,
-    QDialogButtonBox, QTextEdit, QLabel, QProgressDialog, QFileDialog,
-    QStackedWidget, QHBoxLayout
-)
-from PySide6.QtGui import QAction, QFont
-from PySide6.QtCore import Qt
 import re
 from io import StringIO
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -46,10 +40,7 @@ def run_git_command(command, cwd=None):
         return result.stdout.decode().strip()
     except subprocess.CalledProcessError as e:
         logging.error(f"Git command failed: {e.stderr.decode().strip()}")
-        QMessageBox.critical(
-            None, "Git Error",
-            f"Command '{command}' failed:\n{e.stderr.decode().strip()}"
-        )
+        messagebox.showerror("Git Error", f"Command '{command}' failed:\n{e.stderr.decode().strip()}")
         return None
 
 def format_yaml_string(yaml_string):
@@ -60,28 +51,41 @@ def format_yaml_string(yaml_string):
 
 def show_suppression_preview(suppression_yaml):
     """Displays a dialog to preview the suppression YAML."""
-    dialog = QDialog()
-    dialog.setWindowTitle("Preview Suppression")
-    layout = QVBoxLayout(dialog)
+    dialog = tk.Toplevel()
+    dialog.title("Preview Suppression")
+    dialog.geometry("600x400")
 
-    text_edit = QTextEdit(dialog)
-    text_edit.setText(suppression_yaml)
-    text_edit.setReadOnly(True)
-    layout.addWidget(text_edit)
+    text_edit = tk.Text(dialog)
+    text_edit.insert("1.0", suppression_yaml)
+    text_edit.config(state=tk.DISABLED)
+    text_edit.pack(fill=tk.BOTH, expand=True)
 
-    button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
-    button_box.accepted.connect(dialog.accept)
-    button_box.rejected.connect(dialog.reject)
-    layout.addWidget(button_box)
+    def on_ok():
+        dialog.destroy()
+        dialog.result = True
 
-    dialog.setLayout(layout)
-    return dialog.exec() == QDialog.Accepted
+    def on_cancel():
+        dialog.destroy()
+        dialog.result = False
 
-class MainWindow(QMainWindow):
+    button_frame = tk.Frame(dialog)
+    button_frame.pack(pady=5)
+
+    ok_button = tk.Button(button_frame, text="OK", command=on_ok)
+    cancel_button = tk.Button(button_frame, text="Cancel", command=on_cancel)
+    ok_button.pack(side=tk.LEFT, padx=5)
+    cancel_button.pack(side=tk.RIGHT, padx=5)
+
+    dialog.transient()
+    dialog.grab_set()
+    dialog.wait_window()
+    return getattr(dialog, 'result', False)
+
+class MainWindow(tk.Tk):
     """Main window of the application with navigation."""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Buoy - Detection Tuning Tool")
+        self.title("Buoy - Detection Tuning Tool")
         self.selected_client = None
         self.selected_action = None
         self.selected_alert = None
@@ -90,237 +94,219 @@ class MainWindow(QMainWindow):
         self.populate_clients()
 
     def setup_ui(self):
-        # Create a QStackedWidget to hold different pages
-        self.stacked_widget = QStackedWidget(self)
-        self.setCentralWidget(self.stacked_widget)
+        # Create frames for each page
+        self.pages = {}
+        self.current_page = None
 
-        # Create pages
-        self.page1 = QWidget()
-        self.page2 = QWidget()
-        self.page3 = QWidget()
-        self.page4 = QWidget()
+        self.page1 = tk.Frame(self)
+        self.page2 = tk.Frame(self)
+        self.page3 = tk.Frame(self)
+        self.page4 = tk.Frame(self)
+
+        self.pages[1] = self.page1
+        self.pages[2] = self.page2
+        self.pages[3] = self.page3
+        self.pages[4] = self.page4
 
         self.setup_page1()
         self.setup_page2()
         self.setup_page3()
         self.setup_page4()
 
-        # Add pages to stacked widget
-        self.stacked_widget.addWidget(self.page1)
-        self.stacked_widget.addWidget(self.page2)
-        self.stacked_widget.addWidget(self.page3)
-        self.stacked_widget.addWidget(self.page4)
+        self.go_to_page(1)
 
         # Menu bar for settings
-        menubar = self.menuBar()
-        settings_menu = menubar.addMenu('Settings')
+        menubar = tk.Menu(self)
+        self.config(menu=menubar)
 
-        export_action = QAction('Export Suppressions', self)
-        export_action.triggered.connect(self.export_suppressions)
-        settings_menu.addAction(export_action)
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+
+        settings_menu.add_command(label="Export Suppressions", command=self.export_suppressions)
 
     def setup_page1(self):
         """Setup for Page 1: Client Selection."""
-        layout = QVBoxLayout()
+        frame = self.page1
+        label = tk.Label(frame, text="Select Client:")
+        label.pack(pady=10)
 
-        label = QLabel("Select Client:", self)
-        layout.addWidget(label)
-
-        self.client_selector = QComboBox(self)
-        self.client_selector.setEditable(True)
-        layout.addWidget(self.client_selector)
+        self.client_selector = ttk.Combobox(frame)
+        self.client_selector.pack(pady=5)
 
         # Navigation buttons
-        nav_layout = QHBoxLayout()
-        next_button = QPushButton("Next", self)
-        next_button.clicked.connect(self.go_to_page2)
-        nav_layout.addStretch()
-        nav_layout.addWidget(next_button)
-        layout.addLayout(nav_layout)
+        nav_frame = tk.Frame(frame)
+        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
 
-        self.page1.setLayout(layout)
+        next_button = tk.Button(nav_frame, text="Next", command=self.go_to_page2)
+        next_button.pack(side=tk.RIGHT, padx=5)
 
     def setup_page2(self):
         """Setup for Page 2: Action Selection."""
-        layout = QVBoxLayout()
+        frame = self.page2
+        label = tk.Label(frame, text="Choose Action:")
+        label.pack(pady=10)
 
-        label = QLabel("Choose Action:", self)
-        layout.addWidget(label)
+        self.add_suppression_button = tk.Button(frame, text="Add Suppression", command=self.select_add_suppression)
+        self.add_suppression_button.pack(pady=5)
 
-        self.add_suppression_button = QPushButton("Add Suppression", self)
-        self.add_suppression_button.clicked.connect(self.select_add_suppression)
-        layout.addWidget(self.add_suppression_button)
-
-        self.simple_tune_button = QPushButton("Simple Tune", self)
-        self.simple_tune_button.clicked.connect(self.select_simple_tune)
-        layout.addWidget(self.simple_tune_button)
+        self.simple_tune_button = tk.Button(frame, text="Simple Tune", command=self.select_simple_tune)
+        self.simple_tune_button.pack(pady=5)
 
         # Navigation buttons
-        nav_layout = QHBoxLayout()
-        back_button = QPushButton("Back", self)
-        back_button.clicked.connect(self.go_to_page1)
-        nav_layout.addWidget(back_button)
-        nav_layout.addStretch()
-        layout.addLayout(nav_layout)
+        nav_frame = tk.Frame(frame)
+        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
 
-        self.page2.setLayout(layout)
+        back_button = tk.Button(nav_frame, text="Back", command=self.go_to_page1)
+        back_button.pack(side=tk.LEFT, padx=5)
 
     def setup_page3(self):
         """Setup for Page 3: Alert Selection and Action Input."""
-        layout = QVBoxLayout()
+        frame = self.page3
+        label = tk.Label(frame, text="Select Alert:")
+        label.pack(pady=10)
 
-        self.alert_list = QListWidget(self)
-        layout.addWidget(QLabel("Select Alert:", self))
-        layout.addWidget(self.alert_list)
+        self.alert_list = tk.Listbox(frame, height=10)
+        self.alert_list.pack(pady=5, fill=tk.BOTH, expand=True)
 
         # For Add Suppression action
-        self.spl_input = QTextEdit(self)
-        self.spl_input.setPlaceholderText("Enter SPL Query here...")
-        self.spl_input.hide()
-        layout.addWidget(self.spl_input)
+        self.spl_input = tk.Text(frame, height=5)
+        self.spl_input.pack(pady=5)
+        self.spl_input.pack_forget()  # Hide initially
 
         # For Simple Tune action
-        self.field_selector = QComboBox(self)
-        self.field_selector.addItems(["dest", "host", "user"])
-        self.field_selector.hide()
-        layout.addWidget(QLabel("Select Field:", self))
-        layout.addWidget(self.field_selector)
-
-        self.value_input = QLineEdit(self)
-        self.value_input.setPlaceholderText("Enter Value")
-        self.value_input.hide()
-        layout.addWidget(self.value_input)
+        self.field_selector_label = tk.Label(frame, text="Select Field:")
+        self.field_selector = ttk.Combobox(frame, values=["dest", "host", "user"])
+        self.value_input = tk.Entry(frame)
+        self.field_selector_label.pack()
+        self.field_selector.pack(pady=5)
+        self.value_input.pack(pady=5)
+        self.field_selector_label.pack_forget()
+        self.field_selector.pack_forget()
+        self.value_input.pack_forget()
 
         # Navigation buttons
-        nav_layout = QHBoxLayout()
-        back_button = QPushButton("Back", self)
-        back_button.clicked.connect(self.go_to_page2)
-        nav_layout.addWidget(back_button)
+        nav_frame = tk.Frame(frame)
+        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
 
-        next_button = QPushButton("Next", self)
-        next_button.clicked.connect(self.go_to_page4)
-        nav_layout.addStretch()
-        nav_layout.addWidget(next_button)
-        layout.addLayout(nav_layout)
+        back_button = tk.Button(nav_frame, text="Back", command=self.go_to_page2)
+        back_button.pack(side=tk.LEFT, padx=5)
 
-        self.page3.setLayout(layout)
+        next_button = tk.Button(nav_frame, text="Next", command=self.go_to_page4)
+        next_button.pack(side=tk.RIGHT, padx=5)
 
     def setup_page4(self):
         """Setup for Page 4: Scratch Pad and Confirmation."""
-        layout = QVBoxLayout()
+        frame = self.page4
+        label = tk.Label(frame, text="Scratch Pad:")
+        label.pack(pady=10)
 
-        self.scratch_pad = QTextEdit(self)
-        self.scratch_pad.setPlaceholderText("Scratch Pad...")
-        monospace_font = QFont("Courier New")
-        self.scratch_pad.setFont(monospace_font)
-        layout.addWidget(QLabel("Scratch Pad:", self))
-        layout.addWidget(self.scratch_pad)
+        self.scratch_pad = tk.Text(frame, height=15)
+        self.scratch_pad.pack(pady=5, fill=tk.BOTH, expand=True)
 
         # Navigation buttons
-        nav_layout = QHBoxLayout()
-        back_button = QPushButton("Back", self)
-        back_button.clicked.connect(self.go_to_page3)
-        nav_layout.addWidget(back_button)
+        nav_frame = tk.Frame(frame)
+        nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
 
-        finish_button = QPushButton("Finish", self)
-        finish_button.clicked.connect(self.finish_process)
-        nav_layout.addStretch()
-        nav_layout.addWidget(finish_button)
-        layout.addLayout(nav_layout)
+        back_button = tk.Button(nav_frame, text="Back", command=self.go_to_page3)
+        back_button.pack(side=tk.LEFT, padx=5)
 
-        self.page4.setLayout(layout)
+        finish_button = tk.Button(nav_frame, text="Finish", command=self.finish_process)
+        finish_button.pack(side=tk.RIGHT, padx=5)
 
-    def populate_clients(self):
-        if not os.path.exists(CLIENT_BASE_PATH):
-            QMessageBox.critical(self, "Error", f"Client base path '{CLIENT_BASE_PATH}' does not exist.")
-            return
-        client_dirs = [
-            d for d in os.listdir(CLIENT_BASE_PATH)
-            if os.path.isdir(os.path.join(CLIENT_BASE_PATH, d))
-        ]
-        self.client_selector.clear()
-        self.client_selector.addItems(client_dirs)
+    def go_to_page(self, page_number):
+        if self.current_page:
+            self.current_page.pack_forget()
+        self.current_page = self.pages[page_number]
+        self.current_page.pack(fill=tk.BOTH, expand=True)
 
     def go_to_page1(self):
-        self.stacked_widget.setCurrentWidget(self.page1)
+        self.go_to_page(1)
 
     def go_to_page2(self):
-        self.selected_client = self.client_selector.currentText()
+        self.selected_client = self.client_selector.get()
         if not self.selected_client:
-            QMessageBox.warning(self, "Selection Required", "Please select a client.")
+            messagebox.showwarning("Selection Required", "Please select a client.")
             return
-        self.stacked_widget.setCurrentWidget(self.page2)
+        self.go_to_page(2)
 
     def go_to_page3(self):
         # Load alerts for the selected client
         client_dir = os.path.join(CLIENT_BASE_PATH, self.selected_client)
         if not os.path.exists(client_dir):
-            QMessageBox.critical(self, "Error", f"Client '{self.selected_client}' does not exist.")
+            messagebox.showerror("Error", f"Client '{self.selected_client}' does not exist.")
             return
 
         ids = self.read_alerts_file(client_dir)
         if not ids:
-            QMessageBox.warning(self, "No Alerts", f"No valid alerts found for client '{self.selected_client}'.")
+            messagebox.showwarning("No Alerts", f"No valid alerts found for client '{self.selected_client}'.")
             return
 
-        self.alert_list.clear()
-        self.alert_list.addItems(ids)
+        self.alert_list.delete(0, tk.END)
+        for alert_id in ids:
+            self.alert_list.insert(tk.END, alert_id)
 
         # Show/hide input fields based on action
         if self.selected_action == "Add Suppression":
-            self.spl_input.show()
-            self.field_selector.hide()
-            self.value_input.hide()
+            self.spl_input.pack()
+            self.field_selector_label.pack_forget()
+            self.field_selector.pack_forget()
+            self.value_input.pack_forget()
         elif self.selected_action == "Simple Tune":
-            self.spl_input.hide()
-            self.field_selector.show()
-            self.value_input.show()
+            self.spl_input.pack_forget()
+            self.field_selector_label.pack()
+            self.field_selector.pack()
+            self.value_input.pack()
 
-        self.stacked_widget.setCurrentWidget(self.page3)
+        self.go_to_page(3)
 
     def go_to_page4(self):
-        alert_item = self.alert_list.currentItem()
-        self.selected_alert = alert_item.text() if alert_item else None
+        selection = self.alert_list.curselection()
+        if selection:
+            self.selected_alert = self.alert_list.get(selection[0])
+        else:
+            self.selected_alert = None
 
         if not self.selected_alert:
-            QMessageBox.warning(self, "Selection Required", "Please select an alert.")
+            messagebox.showwarning("Selection Required", "Please select an alert.")
             return
 
         if self.selected_action == "Add Suppression":
-            spl = self.spl_input.toPlainText().strip()
+            spl = self.spl_input.get("1.0", tk.END).strip()
             if not spl:
-                QMessageBox.warning(self, "Input Required", "Please enter an SPL query.")
+                messagebox.showwarning("Input Required", "Please enter an SPL query.")
                 return
-            self.scratch_pad.setPlainText(spl)
+            self.scratch_pad.delete("1.0", tk.END)
+            self.scratch_pad.insert("1.0", spl)
         elif self.selected_action == "Simple Tune":
-            field = self.field_selector.currentText()
-            value = self.value_input.text().strip()
+            field = self.field_selector.get()
+            value = self.value_input.get().strip()
             if not value:
-                QMessageBox.warning(self, "Input Required", "Please enter a value.")
+                messagebox.showwarning("Input Required", "Please enter a value.")
                 return
             # Generate SPL for simple tune
             alert_id_snake_case = self.to_snake_case(self.selected_alert)
             unix_time = int((datetime.now() + timedelta(weeks=1)).timestamp())
             spl = f'`notable_index` source={alert_id_snake_case} {field}="{value}" _time > {unix_time}'
-            self.scratch_pad.setPlainText(spl)
+            self.scratch_pad.delete("1.0", tk.END)
+            self.scratch_pad.insert("1.0", spl)
 
-        self.stacked_widget.setCurrentWidget(self.page4)
+        self.go_to_page(4)
 
     def finish_process(self):
         # Use the content from scratch pad as the SPL
-        spl = self.scratch_pad.toPlainText().strip()
+        spl = self.scratch_pad.get("1.0", tk.END).strip()
         if not spl:
-            QMessageBox.warning(self, "Input Required", "Scratch pad cannot be empty.")
+            messagebox.showwarning("Input Required", "Scratch pad cannot be empty.")
             return
 
         if self.selected_action == "Add Suppression":
-            nms_ticket, ok = QInputDialog.getText(self, "NMS Ticket Number", "Enter NMS Ticket Number:")
-            if not ok or not nms_ticket.strip():
-                QMessageBox.warning(self, "Input Required", "NMS Ticket Number is required.")
+            nms_ticket = simpledialog.askstring("NMS Ticket Number", "Enter NMS Ticket Number:")
+            if not nms_ticket:
+                messagebox.showwarning("Input Required", "NMS Ticket Number is required.")
                 return
-            reason, ok = QInputDialog.getText(self, "Reason", "Enter Reason:")
-            if not ok or not reason.strip():
-                QMessageBox.warning(self, "Input Required", "Reason is required.")
+            reason = simpledialog.askstring("Reason", "Enter Reason:")
+            if not reason:
+                messagebox.showwarning("Input Required", "Reason is required.")
                 return
 
             suppression_id = f"{nms_ticket}_{self.selected_client}_{self.selected_alert.replace(' ', '_').lower()}"
@@ -346,13 +332,10 @@ class MainWindow(QMainWindow):
                     # Git operations and push changes
                     branch_name = f"suppression_{nms_ticket}"
                     if self.git_operations(self.selected_client, nms_ticket, reason, branch_name):
-                        QMessageBox.information(
-                            self, "Success",
-                            f"Suppression added and pushed to branch '{branch_name}'!"
-                        )
+                        messagebox.showinfo("Success", f"Suppression added and pushed to branch '{branch_name}'!")
         elif self.selected_action == "Simple Tune":
             # For simple tune, proceed with existing process
-            suppression_id = f"simple_tune_{self.to_snake_case(self.selected_alert)}_{self.field_selector.currentText()}_{self.value_input.text().strip()}"
+            suppression_id = f"simple_tune_{self.to_snake_case(self.selected_alert)}_{self.field_selector.get()}_{self.value_input.get().strip()}"
 
             new_suppression = CommentedMap({
                 'id': suppression_id,
@@ -372,10 +355,7 @@ class MainWindow(QMainWindow):
             if show_suppression_preview(formatted_yaml):
                 # Proceed with adding suppression to file
                 if self.update_suppressions_file(self.selected_client, new_suppression):
-                    QMessageBox.information(
-                        self, "Success",
-                        f"Simple tune suppression added for '{self.selected_alert}'!"
-                    )
+                    messagebox.showinfo("Success", f"Simple tune suppression added for '{self.selected_alert}'!")
 
         # Reset the application
         self.reset_app()
@@ -385,10 +365,10 @@ class MainWindow(QMainWindow):
         self.selected_client = None
         self.selected_action = None
         self.selected_alert = None
-        self.scratch_pad.clear()
-        self.spl_input.clear()
-        self.field_selector.setCurrentIndex(0)
-        self.value_input.clear()
+        self.scratch_pad.delete("1.0", tk.END)
+        self.spl_input.delete("1.0", tk.END)
+        self.field_selector.set("")
+        self.value_input.delete(0, tk.END)
         self.go_to_page1()
 
     def select_add_suppression(self):
@@ -400,9 +380,11 @@ class MainWindow(QMainWindow):
         self.go_to_page3()
 
     def git_operations(self, client_name, nms_number, reason, branch_name):
-        progress = QProgressDialog("Performing Git operations...", None, 0, 0, self)
-        progress.setWindowModality(Qt.WindowModal)
-        progress.show()
+        progress = tk.Toplevel(self)
+        progress.title("Performing Git operations...")
+        label = tk.Label(progress, text="Please wait...")
+        label.pack(pady=10)
+        self.update()
 
         try:
             if not run_git_command('git checkout main'):
@@ -424,7 +406,7 @@ class MainWindow(QMainWindow):
 
             return True
         finally:
-            progress.close()
+            progress.destroy()
 
     def to_snake_case(self, text):
         return text.lower().replace(' ', '_')
@@ -479,32 +461,45 @@ class MainWindow(QMainWindow):
         ]
 
     def export_suppressions(self):
-        client_name = self.client_selector.currentText()
+        client_name = self.client_selector.get()
         if not client_name:
-            QMessageBox.warning(self, "Selection Required", "Please select a client to export suppressions.")
+            messagebox.showwarning("Selection Required", "Please select a client to export suppressions.")
             return
 
         client_dir = os.path.join(CLIENT_BASE_PATH, client_name)
         suppressions_file = os.path.join(client_dir, 'suppressions.yml')
         if not os.path.exists(suppressions_file):
-            QMessageBox.warning(self, "No Suppressions", f"No suppressions found for client '{client_name}'.")
+            messagebox.showwarning("No Suppressions", f"No suppressions found for client '{client_name}'.")
             return
 
-        save_path, _ = QFileDialog.getSaveFileName(self, "Save Suppressions As", f"{client_name}_suppressions.yml", "YAML Files (*.yml *.yaml)")
+        save_path = filedialog.asksaveasfilename(
+            title="Save Suppressions As",
+            defaultextension=".yml",
+            initialfile=f"{client_name}_suppressions.yml",
+            filetypes=[("YAML Files", "*.yml *.yaml")])
         if save_path:
             try:
                 with open(suppressions_file, 'r') as src, open(save_path, 'w') as dst:
                     dst.write(src.read())
-                QMessageBox.information(self, "Export Successful", f"Suppressions exported to '{save_path}'.")
+                messagebox.showinfo("Export Successful", f"Suppressions exported to '{save_path}'.")
             except Exception as e:
                 logging.error(f"Error exporting suppressions: {e}")
-                QMessageBox.critical(self, "Export Failed", "An error occurred while exporting suppressions.")
+                messagebox.showerror("Export Failed", "An error occurred while exporting suppressions.")
+
+    def populate_clients(self):
+        if not os.path.exists(CLIENT_BASE_PATH):
+            messagebox.showerror("Error", f"Client base path '{CLIENT_BASE_PATH}' does not exist.")
+            return
+        client_dirs = [
+            d for d in os.listdir(CLIENT_BASE_PATH)
+            if os.path.isdir(os.path.join(CLIENT_BASE_PATH, d))
+        ]
+        self.client_selector['values'] = client_dirs
 
 def main():
-    app = QApplication([])
-    window = MainWindow()
-    window.show()
-    app.exec()
+    app = MainWindow()
+    app.geometry("600x500")
+    app.mainloop()
 
 if __name__ == '__main__':
     main()
